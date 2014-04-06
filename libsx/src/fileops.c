@@ -123,8 +123,8 @@ static void xres_xfer_update(sxc_xres_t *xres, struct sxi_block_stat *b, const c
         double overall_t = current_t + xres->overall.time;
         double overall_speed = overall_mb / overall_t;
         SXDEBUG("%g MB in %g sec", overall_mb, overall_t);
-        sxi_info(xres->sx, "%s in progress: file #%d %.1f%% @%.2f MB/s, overall %.3f MB @%.2f MB/s",
-                 what, xres->completed, b->req ? 100.0 * b->xfer / b->req : 0.0,
+        sxi_info(xres->sx, "%s in progress: file #%d @%.2f MB/s, overall %.3f MB @%.2f MB/s",
+                 what, xres->completed,
                  current_mb / current_t,
                  overall_mb, overall_speed);
         memcpy(&xres->tv, &tv, sizeof(tv));

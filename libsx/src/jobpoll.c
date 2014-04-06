@@ -30,7 +30,6 @@
 
 #define CBDEBUG(...) do{ sxc_client_t *sx = yactx->sx; SXDEBUG(__VA_ARGS__); } while(0)
 
-#define POLL_INTERVAL 30.0
 struct job_ctx {
     unsigned *queries_finished;
     sxi_job_t *yactx;
@@ -636,6 +635,7 @@ static int sxi_job_poll(sxi_conns_t *conns, sxi_jobs_t *jobs, unsigned *successf
     long delay = 0;
     unsigned i;
     struct timeval tv0, tv1;
+    struct timeval t0, t;
     int ret = 0;
     int rc = 0;
     sxc_client_t *sx = sxi_conns_get_client(conns);
@@ -646,6 +646,7 @@ static int sxi_job_poll(sxi_conns_t *conns, sxi_jobs_t *jobs, unsigned *successf
     }
     if (successful)
         *successful = 0;
+    gettimeofday(&t0, NULL);
     while(1) {
         int msg_printed = 0;
         gettimeofday(&tv0, NULL);
@@ -696,6 +697,11 @@ static int sxi_job_poll(sxi_conns_t *conns, sxi_jobs_t *jobs, unsigned *successf
         }
         if (!pending)
             break;
+        gettimeofday(&t, NULL);
+        if (sxi_timediff(&t, &t0) > PROGRESS_INTERVAL) {
+            sxi_info(sx, "Operation in progress: %d pending jobs", pending);
+            memcpy(&t0, &t, sizeof(t));
+        }
         SXDEBUG("Pending %d jobs, %d errors, %d queries", pending, errors, alive);
         if (alive) {
             while (finished != alive && rc != -1) {
@@ -718,10 +724,15 @@ static int sxi_job_poll(sxi_conns_t *conns, sxi_jobs_t *jobs, unsigned *successf
         SXDEBUG("Sleeping %ld ms...", delay);
         usleep(delay * 1000);
     }
+    pending = 0;
     for (i=0;i<jobs->n;i++) {
         if (jobs->jobs[i])
             sxi_job_result(sx, &jobs->jobs[i], successful);
+        if (jobs->jobs[i] && jobs->jobs[i]->status == JOBST_PENDING)
+            pending++;
     }
+    if (pending)
+            sxi_info(sx, "Operation in progress: %d pending jobs", pending);
     return ret;
 }
 

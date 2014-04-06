@@ -40,4 +40,6 @@ int sxi_job_wait(sxi_conns_t *conn, sxi_jobs_t *jobs, unsigned *successful);
 
 int sxi_job_submit_and_poll(sxi_conns_t *conns, sxi_hostlist_t *hlist, const char *query, void *content, size_t content_size);
 
+#define PROGRESS_INTERVAL 6.0
+#define POLL_INTERVAL 30.0
 #endif

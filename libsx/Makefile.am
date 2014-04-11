@@ -1,6 +1,9 @@
 ACLOCAL_AMFLAGS = -I m4
 
 SUBDIRS = libltdl
+if BUILD_CURL
+SUBDIRS += ../3rdparty/curl
+endif
 
 AM_CPPFLAGS = -I $(top_srcdir)/include -I $(top_srcdir)/src $(LTDLINCL)
 lib_LTLIBRARIES = src/libsx.la
@@ -41,6 +44,7 @@ src_libsx_la_SOURCES = \
 	src/version.c
 
 src_libsx_la_LIBADD = @YAJL_LIBS@ @LIBCURL@ @CRYPTO_LIBS@ @LIBLTDL@ -lssl
+src_libsx_la_DEPENDENCIES=@LIBCURL@
 # TODO: only sx_ should be exported not sxi_
 src_libsx_la_LDFLAGS = -no-undefined -export-symbols-regex sx.*
 src_libsx_la_CPPFLAGS = $(AM_CPPFLAGS) @YAJL_CPPFLAGS@ @LIBCURL_CPPFLAGS@ @CRYPTO_CFLAGS@ \

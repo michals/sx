@@ -4,6 +4,7 @@ SUBDIRS = libltdl
 if BUILD_CURL
 SUBDIRS += ../3rdparty/curl
 endif
+DIST_SUBDIRS=$(SUBDIRS)
 
 AM_CPPFLAGS = -I $(top_srcdir)/include -I $(top_srcdir)/src $(LTDLINCL)
 lib_LTLIBRARIES = src/libsx.la

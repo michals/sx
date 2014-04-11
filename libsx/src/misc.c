@@ -24,8 +24,12 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <sys/stat.h>
-#include <ftw.h>
 #include <errno.h>
+#if HAVE_FTW
+#include <ftw.h>
+#else
+#include "ftw.h"
+#endif
 
 #include "libsx-int.h"
 #include "misc.h"

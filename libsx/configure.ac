@@ -104,6 +104,7 @@ LIBS="$ac_save_LIBS"
 ac_configure_args="$ac_configure_args --with-zlib --with-idn --with-pic --disable-shared --with-ssl --without-libssh2 --without-librtmp --without-nghttp2 --disable-ftp --disable-file --disable-ldap --disable-ldaps --disable-rtsp --disable-dict --disable-telnet --disable-tftp --disable-pop3 --disable-imap --disable-smtp --disable-gopher"
 if test "$build_curl" = "yes"; then
     LIBCURL="../3rdparty/curl/lib/libcurl.la -lidn -lz"
+    LIBCURL_CPPFLAGS="-I../3rdparty/curl/include"
     AC_CONFIG_SUBDIRS([../3rdparty/curl])
 fi
 AM_CONDITIONAL([BUILD_CURL], [test "$build_curl" = "yes"])

@@ -14903,9 +14903,51 @@ fi
 
 CPPFLAGS="$ac_save_CPPFLAGS"
 LIBS="$ac_save_LIBS"
-ac_configure_args="$ac_configure_args --with-zlib --with-idn --with-pic --disable-shared --with-ssl --without-libssh2 --without-librtmp --without-nghttp2 --disable-ftp --disable-file --disable-ldap --disable-ldaps --disable-rtsp --disable-dict --disable-telnet --disable-tftp --disable-pop3 --disable-imap --disable-smtp --disable-gopher"
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for idn_free in -lidn" >&5
+$as_echo_n "checking for idn_free in -lidn... " >&6; }
+if ${ac_cv_lib_idn_idn_free+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  ac_check_lib_save_LIBS=$LIBS
+LIBS="-lidn  $LIBS"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+/* Override any GCC internal prototype to avoid an error.
+   Use char because int might match the return type of a GCC
+   builtin and then its argument prototype would still apply.  */
+#ifdef __cplusplus
+extern "C"
+#endif
+char idn_free ();
+int
+main ()
+{
+return idn_free ();
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_link "$LINENO"; then :
+  ac_cv_lib_idn_idn_free=yes
+else
+  ac_cv_lib_idn_idn_free=no
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+LIBS=$ac_check_lib_save_LIBS
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_idn_idn_free" >&5
+$as_echo "$ac_cv_lib_idn_idn_free" >&6; }
+if test "x$ac_cv_lib_idn_idn_free" = xyes; then :
+  config_idn='--with-idn';link_idn='-lidn'
+else
+  config_idn='';link_idn=''
+fi
+
+ac_configure_args="$ac_configure_args --with-zlib $with_idn --with-pic --disable-shared --with-ssl --without-libssh2 --without-librtmp --without-nghttp2 --disable-ftp --disable-file --disable-ldap --disable-ldaps --disable-rtsp --disable-dict --disable-telnet --disable-tftp --disable-pop3 --disable-imap --disable-smtp --disable-gopher"
 if test "$build_curl" = "yes"; then
-    LIBCURL="../3rdparty/curl/lib/libcurl.la -lidn -lz"
+    LIBCURL="../3rdparty/curl/lib/libcurl.la $link_idn -lz"
     LIBCURL_CPPFLAGS="-I../3rdparty/curl/include"
 
 

@@ -115,9 +115,10 @@ AC_RUN_IFELSE([AC_LANG_PROGRAM([
 ])],[build_curl=no],[build_curl=yes],[build_curl=yes])
 CPPFLAGS="$ac_save_CPPFLAGS"
 LIBS="$ac_save_LIBS"
-ac_configure_args="$ac_configure_args --with-zlib --with-idn --with-pic --disable-shared --with-ssl --without-libssh2 --without-librtmp --without-nghttp2 --disable-ftp --disable-file --disable-ldap --disable-ldaps --disable-rtsp --disable-dict --disable-telnet --disable-tftp --disable-pop3 --disable-imap --disable-smtp --disable-gopher"
+AC_CHECK_LIB([idn],[idn_free],[config_idn='--with-idn';link_idn='-lidn'],[config_idn='';link_idn=''])
+ac_configure_args="$ac_configure_args --with-zlib $with_idn --with-pic --disable-shared --with-ssl --without-libssh2 --without-librtmp --without-nghttp2 --disable-ftp --disable-file --disable-ldap --disable-ldaps --disable-rtsp --disable-dict --disable-telnet --disable-tftp --disable-pop3 --disable-imap --disable-smtp --disable-gopher"
 if test "$build_curl" = "yes"; then
-    LIBCURL="../3rdparty/curl/lib/libcurl.la -lidn -lz"
+    LIBCURL="../3rdparty/curl/lib/libcurl.la $link_idn -lz"
     LIBCURL_CPPFLAGS="-I../3rdparty/curl/include"
     AC_CONFIG_SUBDIRS([../3rdparty/curl])
 fi

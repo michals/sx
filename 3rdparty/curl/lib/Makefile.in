@@ -139,35 +139,7 @@ mkinstalldirs = $(SHELL) $(top_srcdir)/mkinstalldirs
 CONFIG_HEADER = curl_config.h $(top_builddir)/include/curl/curlbuild.h
 CONFIG_CLEAN_FILES = libcurl.vers
 CONFIG_CLEAN_VPATH_FILES =
-am__vpath_adj_setup = srcdirstrip=`echo "$(srcdir)" | sed 's|.|.|g'`;
-am__vpath_adj = case $$p in \
-    $(srcdir)/*) f=`echo "$$p" | sed "s|^$$srcdirstrip/||"`;; \
-    *) f=$$p;; \
-  esac;
-am__strip_dir = f=`echo $$p | sed -e 's|^.*/||'`;
-am__install_max = 40
-am__nobase_strip_setup = \
-  srcdirstrip=`echo "$(srcdir)" | sed 's/[].[^$$\\*|]/\\\\&/g'`
-am__nobase_strip = \
-  for p in $$list; do echo "$$p"; done | sed -e "s|$$srcdirstrip/||"
-am__nobase_list = $(am__nobase_strip_setup); \
-  for p in $$list; do echo "$$p $$p"; done | \
-  sed "s| $$srcdirstrip/| |;"' / .*\//!s/ .*/ ./; s,\( .*\)/[^/]*$$,\1,' | \
-  $(AWK) 'BEGIN { files["."] = "" } { files[$$2] = files[$$2] " " $$1; \
-    if (++n[$$2] == $(am__install_max)) \
-      { print $$2, files[$$2]; n[$$2] = 0; files[$$2] = "" } } \
-    END { for (dir in files) print dir, files[dir] }'
-am__base_list = \
-  sed '$$!N;$$!N;$$!N;$$!N;$$!N;$$!N;$$!N;s/\n/ /g' | \
-  sed '$$!N;$$!N;$$!N;$$!N;s/\n/ /g'
-am__uninstall_files_from_dir = { \
-  test -z "$$files" \
-    || { test ! -d "$$dir" && test ! -f "$$dir" && test ! -r "$$dir"; } \
-    || { echo " ( cd '$$dir' && rm -f" $$files ")"; \
-         $(am__cd) "$$dir" && rm -f $$files; }; \
-  }
-am__installdirs = "$(DESTDIR)$(libdir)"
-LTLIBRARIES = $(lib_LTLIBRARIES) $(noinst_LTLIBRARIES)
+LTLIBRARIES = $(noinst_LTLIBRARIES)
 libcurl_la_LIBADD =
 am__dirstamp = $(am__leading_dot)dirstamp
 am__objects_1 = vtls/libcurl_la-openssl.lo vtls/libcurl_la-gtls.lo \
@@ -234,6 +206,8 @@ am__v_lt_1 =
 libcurl_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC $(AM_LIBTOOLFLAGS) \
 	$(LIBTOOLFLAGS) --mode=link $(CCLD) $(libcurl_la_CFLAGS) \
 	$(CFLAGS) $(libcurl_la_LDFLAGS) $(LDFLAGS) -o $@
+@BUILD_UNITTESTS_FALSE@am_libcurl_la_rpath =
+@BUILD_UNITTESTS_TRUE@am_libcurl_la_rpath =
 libcurlu_la_LIBADD =
 am__objects_5 = vtls/libcurlu_la-openssl.lo vtls/libcurlu_la-gtls.lo \
 	vtls/libcurlu_la-vtls.lo vtls/libcurlu_la-nss.lo \
@@ -582,9 +556,8 @@ EXTRA_DIST = Makefile.b32 Makefile.m32 Makefile.vc6 config-win32.h	\
  firefox-db2pem.sh config-vxworks.h Makefile.vxworks checksrc.pl	\
  objnames-test08.sh objnames-test10.sh objnames.inc
 
-lib_LTLIBRARIES = libcurl.la
-@BUILD_UNITTESTS_FALSE@noinst_LTLIBRARIES = 
-@BUILD_UNITTESTS_TRUE@noinst_LTLIBRARIES = libcurlu.la
+@BUILD_UNITTESTS_FALSE@noinst_LTLIBRARIES = libcurl.la
+@BUILD_UNITTESTS_TRUE@noinst_LTLIBRARIES = libcurlu.la libcurl.la
 
 # Specify our include paths here, and do it relative to $(top_srcdir) and
 # $(top_builddir), to ensure that these paths which belong to the library
@@ -741,41 +714,6 @@ distclean-hdr:
 libcurl.vers: $(top_builddir)/config.status $(srcdir)/libcurl.vers.in
 	cd $(top_builddir) && $(SHELL) ./config.status $(subdir)/$@
 
-install-libLTLIBRARIES: $(lib_LTLIBRARIES)
-	@$(NORMAL_INSTALL)
-	@list='$(lib_LTLIBRARIES)'; test -n "$(libdir)" || list=; \
-	list2=; for p in $$list; do \
-	  if test -f $$p; then \
-	    list2="$$list2 $$p"; \
-	  else :; fi; \
-	done; \
-	test -z "$$list2" || { \
-	  echo " $(MKDIR_P) '$(DESTDIR)$(libdir)'"; \
-	  $(MKDIR_P) "$(DESTDIR)$(libdir)" || exit 1; \
-	  echo " $(LIBTOOL) $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=install $(INSTALL) $(INSTALL_STRIP_FLAG) $$list2 '$(DESTDIR)$(libdir)'"; \
-	  $(LIBTOOL) $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=install $(INSTALL) $(INSTALL_STRIP_FLAG) $$list2 "$(DESTDIR)$(libdir)"; \
-	}
-
-uninstall-libLTLIBRARIES:
-	@$(NORMAL_UNINSTALL)
-	@list='$(lib_LTLIBRARIES)'; test -n "$(libdir)" || list=; \
-	for p in $$list; do \
-	  $(am__strip_dir) \
-	  echo " $(LIBTOOL) $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=uninstall rm -f '$(DESTDIR)$(libdir)/$$f'"; \
-	  $(LIBTOOL) $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=uninstall rm -f "$(DESTDIR)$(libdir)/$$f"; \
-	done
-
-clean-libLTLIBRARIES:
-	-test -z "$(lib_LTLIBRARIES)" || rm -f $(lib_LTLIBRARIES)
-	@list='$(lib_LTLIBRARIES)'; \
-	locs=`for p in $$list; do echo $$p; done | \
-	      sed 's|^[^/]*$$|.|; s|/[^/]*$$||; s|$$|/so_locations|' | \
-	      sort -u`; \
-	test -z "$$locs" || { \
-	  echo rm -f $${locs}; \
-	  rm -f $${locs}; \
-	}
-
 clean-noinstLTLIBRARIES:
 	-test -z "$(noinst_LTLIBRARIES)" || rm -f $(noinst_LTLIBRARIES)
 	@list='$(noinst_LTLIBRARIES)'; \
@@ -818,7 +756,7 @@ vtls/libcurl_la-gskit.lo: vtls/$(am__dirstamp) \
 	vtls/$(DEPDIR)/$(am__dirstamp)
 
 libcurl.la: $(libcurl_la_OBJECTS) $(libcurl_la_DEPENDENCIES) $(EXTRA_libcurl_la_DEPENDENCIES) 
-	$(AM_V_CCLD)$(libcurl_la_LINK) -rpath $(libdir) $(libcurl_la_OBJECTS) $(libcurl_la_LIBADD) $(LIBS)
+	$(AM_V_CCLD)$(libcurl_la_LINK) $(am_libcurl_la_rpath) $(libcurl_la_OBJECTS) $(libcurl_la_LIBADD) $(LIBS)
 vtls/libcurlu_la-openssl.lo: vtls/$(am__dirstamp) \
 	vtls/$(DEPDIR)/$(am__dirstamp)
 vtls/libcurlu_la-gtls.lo: vtls/$(am__dirstamp) \
@@ -2766,9 +2704,6 @@ check: check-am
 @CURLDEBUG_FALSE@all-local:
 all-am: Makefile $(LTLIBRARIES) curl_config.h all-local
 installdirs:
-	for dir in "$(DESTDIR)$(libdir)"; do \
-	  test -z "$$dir" || $(MKDIR_P) "$$dir"; \
-	done
 install: install-am
 install-exec: install-exec-am
 install-data: install-data-am
@@ -2803,8 +2738,8 @@ maintainer-clean-generic:
 	@echo "it deletes files that may require special tools to rebuild."
 clean: clean-am
 
-clean-am: clean-generic clean-libLTLIBRARIES clean-libtool \
-	clean-noinstLTLIBRARIES mostlyclean-am
+clean-am: clean-generic clean-libtool clean-noinstLTLIBRARIES \
+	mostlyclean-am
 
 distclean: distclean-am
 	-rm -rf ./$(DEPDIR) vtls/$(DEPDIR)
@@ -2830,7 +2765,7 @@ install-dvi: install-dvi-am
 
 install-dvi-am:
 
-install-exec-am: install-libLTLIBRARIES
+install-exec-am:
 
 install-html: install-html-am
 
@@ -2870,24 +2805,23 @@ ps: ps-am
 
 ps-am:
 
-uninstall-am: uninstall-libLTLIBRARIES
+uninstall-am:
 
 .MAKE: all install-am install-strip
 
 .PHONY: CTAGS GTAGS TAGS all all-am all-local check check-am clean \
-	clean-generic clean-libLTLIBRARIES clean-libtool \
-	clean-noinstLTLIBRARIES cscopelist-am ctags ctags-am distclean \
-	distclean-compile distclean-generic distclean-hdr \
-	distclean-libtool distclean-tags distdir dvi dvi-am html \
-	html-am info info-am install install-am install-data \
-	install-data-am install-dvi install-dvi-am install-exec \
-	install-exec-am install-html install-html-am install-info \
-	install-info-am install-libLTLIBRARIES install-man install-pdf \
-	install-pdf-am install-ps install-ps-am install-strip \
-	installcheck installcheck-am installdirs maintainer-clean \
-	maintainer-clean-generic mostlyclean mostlyclean-compile \
-	mostlyclean-generic mostlyclean-libtool pdf pdf-am ps ps-am \
-	tags tags-am uninstall uninstall-am uninstall-libLTLIBRARIES
+	clean-generic clean-libtool clean-noinstLTLIBRARIES \
+	cscopelist-am ctags ctags-am distclean distclean-compile \
+	distclean-generic distclean-hdr distclean-libtool \
+	distclean-tags distdir dvi dvi-am html html-am info info-am \
+	install install-am install-data install-data-am install-dvi \
+	install-dvi-am install-exec install-exec-am install-html \
+	install-html-am install-info install-info-am install-man \
+	install-pdf install-pdf-am install-ps install-ps-am \
+	install-strip installcheck installcheck-am installdirs \
+	maintainer-clean maintainer-clean-generic mostlyclean \
+	mostlyclean-compile mostlyclean-generic mostlyclean-libtool \
+	pdf pdf-am ps ps-am tags tags-am uninstall uninstall-am
 
 
 checksrc:

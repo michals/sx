@@ -3499,44 +3499,22 @@ if test "x$want_curldebug_assumed" = "xyes" &&
   ac_configure_args="$ac_configure_args --enable-curldebug"
 fi
 
+# Skylable: drop subdirs that are not include/ or lib/
 AC_CONFIG_FILES([Makefile \
-           docs/Makefile \
-           docs/examples/Makefile \
-           docs/libcurl/Makefile \
            include/Makefile \
            include/curl/Makefile \
-           src/Makefile \
            lib/Makefile \
            lib/libcurl.vers \
-           tests/Makefile \
-           tests/certs/Makefile \
-           tests/certs/scripts/Makefile \
-           tests/data/Makefile \
-           tests/server/Makefile \
-           tests/libtest/Makefile \
-           tests/unit/Makefile \
-           packages/Makefile \
-           packages/Win32/Makefile \
-           packages/Win32/cygwin/Makefile \
-           packages/Linux/Makefile \
-           packages/Linux/RPM/Makefile \
-           packages/Linux/RPM/curl.spec \
-           packages/Linux/RPM/curl-ssl.spec \
-           packages/Solaris/Makefile \
-           packages/EPM/curl.list \
-           packages/EPM/Makefile \
-           packages/vms/Makefile \
-           packages/AIX/Makefile \
-           packages/AIX/RPM/Makefile \
-           packages/AIX/RPM/curl.spec \
            curl-config \
            libcurl.pc
 ])
 AC_OUTPUT
 
-CURL_GENERATE_CONFIGUREHELP_PM
+# Skylable: dropped docs/ dir
+#CURL_GENERATE_CONFIGUREHELP_PM
 
-XC_AMEND_DISTCLEAN([lib src tests/unit tests/server tests/libtest docs/examples])
+# Skylable: only keep 'lib' dir here
+XC_AMEND_DISTCLEAN([lib])
 
 AC_MSG_NOTICE([Configured to build curl/libcurl:
 

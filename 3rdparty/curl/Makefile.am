@@ -63,13 +63,13 @@ EXTRA_DIST = CHANGES COPYING maketgz Makefile.dist curl-config.in	\
 
 CLEANFILES = $(VC6LIBDSP) $(VC8LIBPRJ)
 
-bin_SCRIPTS = curl-config
+noinst_SCRIPTS = curl-config
 
-SUBDIRS = lib src include
-DIST_SUBDIRS = $(SUBDIRS) tests packages docs
+# Skylable: only have 'lib' and 'include' in SUBDIRS
+SUBDIRS = lib include
+DIST_SUBDIRS = $(SUBDIRS)
 
-pkgconfigdir = $(libdir)/pkgconfig
-pkgconfig_DATA = libcurl.pc
+noinst_DATA = libcurl.pc
 
 # List of libcurl source files required to generate VC IDE dsp and prj files
 include lib/Makefile.inc
@@ -92,7 +92,9 @@ html:
 pdf:
 	cd docs; make pdf
 
-check: test examples
+# Skylable: disable 'make check'
+# run 'automake --foreign' when you update his Makefile
+#check: test examples
 
 if CROSSCOMPILING
 test-full: test
@@ -175,16 +177,6 @@ pkgadd:
 # resulting .tar.bz2 file will end up at packages/Win32/cygwin
 cygwinbin:
 	$(MAKE) -C packages/Win32/cygwin cygwinbin
-
-# We extend the standard install with a custom hook:
-install-data-hook:
-	cd include && $(MAKE) install
-	cd docs && $(MAKE) install
-
-# We extend the standard uninstall with a custom hook:
-uninstall-hook:
-	cd include && $(MAKE) uninstall
-	cd docs && $(MAKE) uninstall
 
 ca-bundle: lib/mk-ca-bundle.pl
 	@echo "generate a fresh ca-bundle.crt"

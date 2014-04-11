@@ -7576,7 +7576,7 @@ else
     We can't simply define LARGE_OFF_T to be 9223372036854775807,
     since some C++ compilers masquerading as C compilers
     incorrectly reject 9223372036854775807.  */
-#define LARGE_OFF_T (((off_t) 1 << 62) - 1 + ((off_t) 1 << 62))
+#define LARGE_OFF_T ((((off_t) 1 << 31) << 31) - 1 + (((off_t) 1 << 31) << 31))
   int off_t_is_large[(LARGE_OFF_T % 2147483629 == 721
 		       && LARGE_OFF_T % 2147483647 == 1)
 		      ? 1 : -1];
@@ -7621,7 +7621,7 @@ else
     We can't simply define LARGE_OFF_T to be 9223372036854775807,
     since some C++ compilers masquerading as C compilers
     incorrectly reject 9223372036854775807.  */
-#define LARGE_OFF_T (((off_t) 1 << 62) - 1 + ((off_t) 1 << 62))
+#define LARGE_OFF_T ((((off_t) 1 << 31) << 31) - 1 + (((off_t) 1 << 31) << 31))
   int off_t_is_large[(LARGE_OFF_T % 2147483629 == 721
 		       && LARGE_OFF_T % 2147483647 == 1)
 		      ? 1 : -1];
@@ -7644,7 +7644,7 @@ rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
     We can't simply define LARGE_OFF_T to be 9223372036854775807,
     since some C++ compilers masquerading as C compilers
     incorrectly reject 9223372036854775807.  */
-#define LARGE_OFF_T (((off_t) 1 << 62) - 1 + ((off_t) 1 << 62))
+#define LARGE_OFF_T ((((off_t) 1 << 31) << 31) - 1 + (((off_t) 1 << 31) << 31))
   int off_t_is_large[(LARGE_OFF_T % 2147483629 == 721
 		       && LARGE_OFF_T % 2147483647 == 1)
 		      ? 1 : -1];
@@ -7688,7 +7688,7 @@ else
     We can't simply define LARGE_OFF_T to be 9223372036854775807,
     since some C++ compilers masquerading as C compilers
     incorrectly reject 9223372036854775807.  */
-#define LARGE_OFF_T (((off_t) 1 << 62) - 1 + ((off_t) 1 << 62))
+#define LARGE_OFF_T ((((off_t) 1 << 31) << 31) - 1 + (((off_t) 1 << 31) << 31))
   int off_t_is_large[(LARGE_OFF_T % 2147483629 == 721
 		       && LARGE_OFF_T % 2147483647 == 1)
 		      ? 1 : -1];
@@ -7711,7 +7711,7 @@ rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
     We can't simply define LARGE_OFF_T to be 9223372036854775807,
     since some C++ compilers masquerading as C compilers
     incorrectly reject 9223372036854775807.  */
-#define LARGE_OFF_T (((off_t) 1 << 62) - 1 + ((off_t) 1 << 62))
+#define LARGE_OFF_T ((((off_t) 1 << 31) << 31) - 1 + (((off_t) 1 << 31) << 31))
   int off_t_is_large[(LARGE_OFF_T % 2147483629 == 721
 		       && LARGE_OFF_T % 2147483647 == 1)
 		      ? 1 : -1];
@@ -39367,7 +39367,8 @@ if test "x$want_curldebug_assumed" = "xyes" &&
   ac_configure_args="$ac_configure_args --enable-curldebug"
 fi
 
-ac_config_files="$ac_config_files Makefile docs/Makefile docs/examples/Makefile docs/libcurl/Makefile include/Makefile include/curl/Makefile src/Makefile lib/Makefile lib/libcurl.vers tests/Makefile tests/certs/Makefile tests/certs/scripts/Makefile tests/data/Makefile tests/server/Makefile tests/libtest/Makefile tests/unit/Makefile packages/Makefile packages/Win32/Makefile packages/Win32/cygwin/Makefile packages/Linux/Makefile packages/Linux/RPM/Makefile packages/Linux/RPM/curl.spec packages/Linux/RPM/curl-ssl.spec packages/Solaris/Makefile packages/EPM/curl.list packages/EPM/Makefile packages/vms/Makefile packages/AIX/Makefile packages/AIX/RPM/Makefile packages/AIX/RPM/curl.spec curl-config libcurl.pc"
+# Skylable: drop subdirs that are not include/ or lib/
+ac_config_files="$ac_config_files Makefile include/Makefile include/curl/Makefile lib/Makefile lib/libcurl.vers curl-config libcurl.pc"
 
 cat >confcache <<\_ACEOF
 # This file is a shell script that caches the results of configure
@@ -40438,35 +40439,10 @@ do
     "depfiles") CONFIG_COMMANDS="$CONFIG_COMMANDS depfiles" ;;
     "libtool") CONFIG_COMMANDS="$CONFIG_COMMANDS libtool" ;;
     "Makefile") CONFIG_FILES="$CONFIG_FILES Makefile" ;;
-    "docs/Makefile") CONFIG_FILES="$CONFIG_FILES docs/Makefile" ;;
-    "docs/examples/Makefile") CONFIG_FILES="$CONFIG_FILES docs/examples/Makefile" ;;
-    "docs/libcurl/Makefile") CONFIG_FILES="$CONFIG_FILES docs/libcurl/Makefile" ;;
     "include/Makefile") CONFIG_FILES="$CONFIG_FILES include/Makefile" ;;
     "include/curl/Makefile") CONFIG_FILES="$CONFIG_FILES include/curl/Makefile" ;;
-    "src/Makefile") CONFIG_FILES="$CONFIG_FILES src/Makefile" ;;
     "lib/Makefile") CONFIG_FILES="$CONFIG_FILES lib/Makefile" ;;
     "lib/libcurl.vers") CONFIG_FILES="$CONFIG_FILES lib/libcurl.vers" ;;
-    "tests/Makefile") CONFIG_FILES="$CONFIG_FILES tests/Makefile" ;;
-    "tests/certs/Makefile") CONFIG_FILES="$CONFIG_FILES tests/certs/Makefile" ;;
-    "tests/certs/scripts/Makefile") CONFIG_FILES="$CONFIG_FILES tests/certs/scripts/Makefile" ;;
-    "tests/data/Makefile") CONFIG_FILES="$CONFIG_FILES tests/data/Makefile" ;;
-    "tests/server/Makefile") CONFIG_FILES="$CONFIG_FILES tests/server/Makefile" ;;
-    "tests/libtest/Makefile") CONFIG_FILES="$CONFIG_FILES tests/libtest/Makefile" ;;
-    "tests/unit/Makefile") CONFIG_FILES="$CONFIG_FILES tests/unit/Makefile" ;;
-    "packages/Makefile") CONFIG_FILES="$CONFIG_FILES packages/Makefile" ;;
-    "packages/Win32/Makefile") CONFIG_FILES="$CONFIG_FILES packages/Win32/Makefile" ;;
-    "packages/Win32/cygwin/Makefile") CONFIG_FILES="$CONFIG_FILES packages/Win32/cygwin/Makefile" ;;
-    "packages/Linux/Makefile") CONFIG_FILES="$CONFIG_FILES packages/Linux/Makefile" ;;
-    "packages/Linux/RPM/Makefile") CONFIG_FILES="$CONFIG_FILES packages/Linux/RPM/Makefile" ;;
-    "packages/Linux/RPM/curl.spec") CONFIG_FILES="$CONFIG_FILES packages/Linux/RPM/curl.spec" ;;
-    "packages/Linux/RPM/curl-ssl.spec") CONFIG_FILES="$CONFIG_FILES packages/Linux/RPM/curl-ssl.spec" ;;
-    "packages/Solaris/Makefile") CONFIG_FILES="$CONFIG_FILES packages/Solaris/Makefile" ;;
-    "packages/EPM/curl.list") CONFIG_FILES="$CONFIG_FILES packages/EPM/curl.list" ;;
-    "packages/EPM/Makefile") CONFIG_FILES="$CONFIG_FILES packages/EPM/Makefile" ;;
-    "packages/vms/Makefile") CONFIG_FILES="$CONFIG_FILES packages/vms/Makefile" ;;
-    "packages/AIX/Makefile") CONFIG_FILES="$CONFIG_FILES packages/AIX/Makefile" ;;
-    "packages/AIX/RPM/Makefile") CONFIG_FILES="$CONFIG_FILES packages/AIX/RPM/Makefile" ;;
-    "packages/AIX/RPM/curl.spec") CONFIG_FILES="$CONFIG_FILES packages/AIX/RPM/curl.spec" ;;
     "curl-config") CONFIG_FILES="$CONFIG_FILES curl-config" ;;
     "libcurl.pc") CONFIG_FILES="$CONFIG_FILES libcurl.pc" ;;
 
@@ -41974,44 +41950,16 @@ $as_echo "$as_me: WARNING: unrecognized options: $ac_unrecognized_opts" >&2;}
 fi
 
 
+# Skylable: dropped docs/ dir
+#CURL_GENERATE_CONFIGUREHELP_PM
 
-    tmp_cpp=`eval echo "$ac_cpp" 2>/dev/null`
-  if test -z "$tmp_cpp"; then
-    tmp_cpp='cpp'
-  fi
-  cat >./tests/configurehelp.pm <<_EOF
-# This is a generated file.  Do not edit.
-
-package configurehelp;
-
-use strict;
-use warnings;
-use Exporter;
-
-use vars qw(
-    @ISA
-    @EXPORT_OK
-    \$Cpreprocessor
-    );
-
-@ISA = qw(Exporter);
-
-@EXPORT_OK = qw(
-    \$Cpreprocessor
-    );
-
-\$Cpreprocessor = '$tmp_cpp';
-
-1;
-_EOF
-
-
+# Skylable: only keep 'lib' dir here
 
 ## ---------------------------------- ##
 ##  Start of distclean amending code  ##
 ## ---------------------------------- ##
 
-for xc_subdir in lib src tests/unit tests/server tests/libtest docs/examples
+for xc_subdir in lib
 do
 
 if test ! -f "$xc_subdir/Makefile"; then

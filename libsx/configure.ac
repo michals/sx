@@ -77,7 +77,7 @@ AC_CACHE_CHECK([for nftw], ac_cv_have_nftw,
 if test "$ac_cv_have_nftw" = "yes"; then
     AC_DEFINE(HAVE_NFTW)
 fi
-AM_CONDITIONAL([BUILD_NFTW], [test "$c_cv_have_nftw" = "no"])
+AM_CONDITIONAL([BUILD_NFTW], [test "$ac_cv_have_nftw" = "no"])
 
 LIBCURL_CHECK_CONFIG([], [], [], [build_curl=yes])
 AC_MSG_CHECKING([whether curl is built with OpenSSL support])

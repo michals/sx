@@ -17,11 +17,11 @@ LT_CONFIG_LTDL_DIR([libltdl])
 LT_INIT([disable-static dlopen])
 LTDL_INIT([recursive])
 
-if "$with_included_libltdl" = "yes"; then
+if test "$with_included_libltdl" = "no"; then
+    AC_MSG_NOTICE([using system ltldl])
+else
     AC_MSG_NOTICE([using included ltdl])
     AC_CONFIG_FILES([libltdl/Makefile])
-else
-    AC_MSG_NOTICE([using system ltldl])
 fi
 AM_CONDITIONAL([BUILD_LTDL], [test "$with_included_ltdl" = "yes"])
 

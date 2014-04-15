@@ -13094,14 +13094,14 @@ eval "LTDLOPEN=\"$libname_spec\""
 
 
 
-if "$with_included_libltdl" = "yes"; then
+if test "$with_included_libltdl" = "no"; then
+    { $as_echo "$as_me:${as_lineno-$LINENO}: using system ltldl" >&5
+$as_echo "$as_me: using system ltldl" >&6;}
+else
     { $as_echo "$as_me:${as_lineno-$LINENO}: using included ltdl" >&5
 $as_echo "$as_me: using included ltdl" >&6;}
     ac_config_files="$ac_config_files libltdl/Makefile"
 
-else
-    { $as_echo "$as_me:${as_lineno-$LINENO}: using system ltldl" >&5
-$as_echo "$as_me: using system ltldl" >&6;}
 fi
  if test "$with_included_ltdl" = "yes"; then
   BUILD_LTDL_TRUE=

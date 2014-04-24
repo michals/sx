@@ -131,4 +131,7 @@ void sxi_retry_msg(sxi_retry_t *retry, const char *host);
 int sxi_retry_done(sxi_retry_t **retry);
 int sxi_curlev_fetch_certificates(curl_events_t *e, const char *url);
 
+sxi_conns_t *sxi_curlev_get_conns(curlev_t *ev);
+void sxi_curlev_set_verified(curlev_t *ev, int value);
+
 #endif

@@ -37,9 +37,6 @@
 #include <errno.h>
 #include <fnmatch.h>
 
-#include <openssl/evp.h>
-#include <openssl/hmac.h>
-#include <openssl/rand.h>
 #include "sxdbi.h"
 #include "hashfs.h"
 #include "hdist.h"
@@ -48,6 +45,7 @@
 #include "sx.h"
 #include "qsort.h"
 #include "utils.h"
+#include "../libsx/src/vcrypto.h"
 
 #define HASHDBS 16
 #define METADBS 16
@@ -128,23 +126,8 @@ static int read_block(int fd, uint8_t *dt, uint64_t off, unsigned int buf_len) {
     return 0;
 }
 
-static int hash_buf(const void *salt, unsigned int salt_len, const void *buf, unsigned int buf_len, sx_hash_t *hash) {
-    EVP_MD_CTX hash_ctx;
-    int ret = 0;
-
-    if(!EVP_DigestInit(&hash_ctx, EVP_sha1())) {
-	SSLERR();
-	return 1;
-    }
-
-    if(!EVP_DigestUpdate(&hash_ctx, salt, salt_len) || !EVP_DigestUpdate(&hash_ctx, buf, buf_len) || !EVP_DigestFinal(&hash_ctx, hash->b, NULL)) {
-	SSLERR();
-	ret = 1;
-    }
-
-    EVP_MD_CTX_cleanup(&hash_ctx);
-
-    return ret;
+static int hash_buf(sxc_client_t *sx, const void *salt, unsigned int salt_len, const void *buf, unsigned int buf_len, sx_hash_t *hash) {
+    return sxi_conns_hashcalc_core_bin(sx, salt, salt_len, buf, buf_len, hash->b);
 }
 
 #define CREATE_DB(DBTYPE) \
@@ -915,7 +898,7 @@ rc_ty sx_hashfs_gc_open(sx_hashfs_t *h)
     uint8_t rndbin[TOKEN_RAND_BYTES];
 
     gettimeofday(&tv0, NULL);
-    if(RAND_pseudo_bytes(rndbin, sizeof(rndbin)) == -1) {
+    if(sxi_rand_pseudo_bytes(rndbin, sizeof(rndbin)) == -1) {
         /* can also return 0 or 1 but that doesn't matter here */
         WARN("Cannot generate random bytes");
         msg_set_reason("Failed to generate random string");
@@ -1206,7 +1189,7 @@ sx_hashfs_t *sx_hashfs_open(const char *dir, sxc_client_t *sx) {
      * forked processes */
     sqlite3_test_control(SQLITE_TESTCTRL_PRNG_RESET);
     /* reset OpenSSL's PRNG otherwise it'll share state after a fork */
-    RAND_cleanup();
+    sxi_rand_cleanup();
 
     sprintf(path, "%s/hashfs.db", dir);
     if(qopen(path, &h->db, "hashfs", NULL))
@@ -1247,7 +1230,7 @@ sx_hashfs_t *sx_hashfs_open(const char *dir, sxc_client_t *sx) {
 	CRIT("Failed to encode cluster key");
 	goto open_hashfs_fail;
     }
-    if(hash_buf("", 0, str, AUTH_KEY_LEN, &h->tokenkey)) {
+    if(hash_buf(sx, "", 0, str, AUTH_KEY_LEN, &h->tokenkey)) {
 	CRIT("Failed to generate token key");
 	goto open_hashfs_fail;
     }
@@ -1656,9 +1639,9 @@ static unsigned int getgcdb(const sx_hash_t *hash) {
     return MurmurHash64(hash, sizeof(*hash), MURMUR_SEED) & (GCDBS-1);
 }
 
-static int getmetadb(const char *filename) {
+static int getmetadb(sxc_client_t *sx, const char *filename) {
     sx_hash_t hash;
-    if(hash_buf(NULL, 0, filename, strlen(filename), &hash))
+    if(hash_buf(sx, NULL, 0, filename, strlen(filename), &hash))
 	return -1;
 
     return MurmurHash64(&hash, sizeof(hash), MURMUR_SEED) & (METADBS-1);
@@ -1783,8 +1766,8 @@ static int check_revision(const char *revision) {
 
 #define TOKEN_SIGNED_LEN UUID_STRING_SIZE + 1 + TOKEN_RAND_BYTES * 2 + 1 + TOKEN_REPLICA_LEN + 1 + TOKEN_EXPIRE_LEN + 1
 rc_ty sx_hashfs_make_token(sx_hashfs_t *h, const uint8_t *user, const char *rndhex, unsigned int replica, int64_t expires_at, const char **token) {
-    HMAC_CTX hmac_ctx;
-    uint8_t md[EVP_MAX_MD_SIZE], rndbin[TOKEN_RAND_BYTES];
+    sxi_hmac_ctx *hmac_ctx;
+    uint8_t md[HASH_BIN_LEN], rndbin[HASH_BIN_LEN];
     char rndhexbuf[TOKEN_RAND_BYTES * 2 + 1], replicahex[2 + TOKEN_REPLICA_LEN + 1], expirehex[TOKEN_EXPIRE_LEN + 1];
     sx_uuid_t node_uuid;
     unsigned int len;
@@ -1804,7 +1787,7 @@ rc_ty sx_hashfs_make_token(sx_hashfs_t *h, const uint8_t *user, const char *rndh
 	/* non-blocking pseudo-random bytes, i.e. we don't want to block or deplete
 	 * entropy as we only need a unique sequence of bytes, not a secret one as
 	 * it is sent in plaintext anyway, and signed with an HMAC */
-	if(RAND_pseudo_bytes(rndbin, sizeof(rndbin)) == -1) {
+	if(sxi_rand_pseudo_bytes(rndbin, sizeof(rndbin)) == -1) {
 	    /* can also return 0 or 1 but that doesn't matter here */
 	    WARN("Cannot generate random bytes");
 	    msg_set_reason("Failed to generate random string");
@@ -1827,10 +1810,10 @@ rc_ty sx_hashfs_make_token(sx_hashfs_t *h, const uint8_t *user, const char *rndh
 	return EINVAL;
     }
 
-    HMAC_CTX_init(&hmac_ctx);
-    if(!sxi_hmac_init_ex(&hmac_ctx, &h->tokenkey, sizeof(h->tokenkey), EVP_sha1(), NULL) ||
-       !sxi_hmac_update(&hmac_ctx, (unsigned char *)h->put_token, len) ||
-       !sxi_hmac_final(&hmac_ctx, md, &len) ||
+    hmac_ctx = sxi_hmac_init(h->sx);
+    if(!sxi_hmac_init_ex(hmac_ctx, &h->tokenkey, sizeof(h->tokenkey)) ||
+       !sxi_hmac_update(hmac_ctx, (unsigned char *)h->put_token, len) ||
+       !sxi_hmac_final(hmac_ctx, md, &len) ||
        len != AUTH_KEY_LEN) {
 	msg_set_reason("Failed to compute token hmac");
 	CRIT("Cannot genearate token hmac");
@@ -1840,7 +1823,7 @@ rc_ty sx_hashfs_make_token(sx_hashfs_t *h, const uint8_t *user, const char *rndh
 	h->put_token[sizeof(h->put_token)-1] = '\0';
 	*token = h->put_token;
     }
-    HMAC_CTX_cleanup(&hmac_ctx);
+    sxi_hmac_cleanup(&hmac_ctx);
 
     return ret;
 }
@@ -1853,11 +1836,11 @@ struct token_data {
     int64_t expires_at;
 };
 
-static int parse_token(const uint8_t *user, const char *token, const sx_hash_t *tokenkey, struct token_data *td) {
+static int parse_token(sxc_client_t *sx, const uint8_t *user, const char *token, const sx_hash_t *tokenkey, struct token_data *td) {
     char uuid_str[UUID_STRING_SIZE+1], hmac[AUTH_KEY_LEN*2+1];
     char *eptr;
-    uint8_t md[EVP_MAX_MD_SIZE];
-    HMAC_CTX hmac_ctx;
+    uint8_t md[HASH_BIN_LEN];
+    sxi_hmac_ctx *hmac_ctx;
     unsigned int ml;
 
     if(!user || !token || !td) {
@@ -1876,17 +1859,17 @@ static int parse_token(const uint8_t *user, const char *token, const sx_hash_t *
 	return 1;
     }
 
-    HMAC_CTX_init(&hmac_ctx);
-    if(!sxi_hmac_init_ex(&hmac_ctx, tokenkey, sizeof(*tokenkey), EVP_sha1(), NULL) ||
-       !sxi_hmac_update(&hmac_ctx, (unsigned char *)token, TOKEN_SIGNED_LEN) ||
-       !sxi_hmac_final(&hmac_ctx, md, &ml) ||
+    hmac_ctx = sxi_hmac_init(sx);
+    if(!sxi_hmac_init_ex(hmac_ctx, tokenkey, sizeof(*tokenkey)) ||
+       !sxi_hmac_update(hmac_ctx, (unsigned char *)token, TOKEN_SIGNED_LEN) ||
+       !sxi_hmac_final(hmac_ctx, md, &ml) ||
        ml != AUTH_KEY_LEN) {
 	SSLERR();
-	HMAC_CTX_cleanup(&hmac_ctx);
+	sxi_hmac_cleanup(&hmac_ctx);
 	CRIT("Cannot genearate token hmac");
 	return 1;
     }
-    HMAC_CTX_cleanup(&hmac_ctx);
+    sxi_hmac_cleanup(&hmac_ctx);
     bin2hex(md, AUTH_KEY_LEN, hmac, sizeof(hmac));
     if(hmac_compare((const unsigned char *)&token[TOKEN_SIGNED_LEN], (const unsigned char *)hmac, AUTH_KEY_LEN*2)) {
 	msg_set_reason("Token signature does not match");
@@ -1920,7 +1903,7 @@ static int parse_token(const uint8_t *user, const char *token, const sx_hash_t *
 
 rc_ty sx_hashfs_token_get(sx_hashfs_t *h, const uint8_t *user, const char *token, unsigned int *replica_count, int64_t *expires_at) {
     struct token_data tkdt;
-    if(parse_token(user, token, &h->tokenkey, &tkdt))
+    if(parse_token(h->sx, user, token, &h->tokenkey, &tkdt))
 	return EINVAL;
     *replica_count = tkdt.replica;
     if (expires_at)
@@ -2114,7 +2097,7 @@ int sx_hashfs_check(sx_hashfs_t *h, int debug) {
 		    continue;
 		}
 
-		if(hash_buf(h->cluster_uuid.string, strlen(h->cluster_uuid.string), h->blockbuf, bsz[j], &comphash))
+		if(hash_buf(h->sx, h->cluster_uuid.string, strlen(h->cluster_uuid.string), h->blockbuf, bsz[j], &comphash))
 		    goto hashfs_check_dataerr;
 
 		if(cmphash(refhash, &comphash)) {
@@ -2352,7 +2335,7 @@ int sx_hashfs_is_or_was_my_volume(sx_hashfs_t *h, const sx_hashfs_volume_t *vol)
     if(!h || !vol || !h->have_hd)
 	return 0;
 
-    if(hash_buf(h->cluster_uuid.string, strlen(h->cluster_uuid.string), vol->name, strlen(vol->name), &hash)) {
+    if(hash_buf(h->sx, h->cluster_uuid.string, strlen(h->cluster_uuid.string), vol->name, strlen(vol->name), &hash)) {
 	WARN("hashing volume name failed");
 	return 0;
     }
@@ -2406,7 +2389,7 @@ rc_ty sx_hashfs_revision_first(sx_hashfs_t *h, const sx_hashfs_volume_t *volume,
 	return EINVAL;
     }
 
-    h->rev_ndb = getmetadb(name);
+    h->rev_ndb = getmetadb(h->sx, name);
     if(h->rev_ndb < 0)
 	return FAIL_EINTERNAL;
 
@@ -2708,7 +2691,7 @@ rc_ty sx_hashfs_volnodes(sx_hashfs_t *h, sx_hashfs_nl_t which, const sx_hashfs_v
 	return EINVAL;
     }
 
-    if(hash_buf(h->cluster_uuid.string, strlen(h->cluster_uuid.string), volume->name, strlen(volume->name), &hash))
+    if(hash_buf(h->sx, h->cluster_uuid.string, strlen(h->cluster_uuid.string), volume->name, strlen(volume->name), &hash))
 	return FAIL_EINTERNAL;
 
     if(!(*nodes = sx_hashfs_hashnodes(h, which, &hash, volume->replica_count)))
@@ -2780,7 +2763,7 @@ char *sxi_hashfs_admintoken(sx_hashfs_t *h) {
 
 rc_ty sx_hashfs_derive_key(sx_hashfs_t *h, unsigned char *key, int len, const char *info)
 {
-    if (derive_key(h->cluster_uuid.binary, sizeof(h->cluster_uuid.binary),
+    if (derive_key(h->sx, h->cluster_uuid.binary, sizeof(h->cluster_uuid.binary),
 		   (const unsigned char*)h->root_auth, strlen(h->root_auth), info,
 		   key, len))
 	return FAIL_EINTERNAL;
@@ -2820,7 +2803,7 @@ rc_ty sx_hashfs_create_user(sx_hashfs_t *h, const char *user, const uint8_t *uid
     do {
 	sx_hash_t uh;
 	if(!uid) {
-	    if (hash_buf(NULL, 0, user, strlen(user), &uh))
+	    if (hash_buf(h->sx, NULL, 0, user, strlen(user), &uh))
 		break;
 	    uid = uh.b;
 	}
@@ -2845,7 +2828,7 @@ rc_ty sx_hashfs_create_user(sx_hashfs_t *h, const char *user, const uint8_t *uid
     return rc;
 }
 
-int encode_auth(const char *user, const unsigned char *key, unsigned key_size, char *auth, unsigned auth_size)
+int encode_auth(sxc_client_t *sx, const char *user, const unsigned char *key, unsigned key_size, char *auth, unsigned auth_size)
 {
     if (!user || !key || !auth) {
 	NULLARG();
@@ -2861,7 +2844,7 @@ int encode_auth(const char *user, const unsigned char *key, unsigned key_size, c
 	return -1;
     }
     sx_hash_t h;
-    if (hash_buf(NULL, 0, user, strlen(user), &h)) {
+    if (hash_buf(sx, NULL, 0, user, strlen(user), &h)) {
 	WARN("hashing username failed");
 	return -1;
     }
@@ -3533,7 +3516,7 @@ rc_ty sx_hashfs_getfile_begin(sx_hashfs_t *h, const char *volume, const char *fi
 	return EINVAL;
     }
 
-    h->get_ndb = getmetadb(filename);
+    h->get_ndb = getmetadb(h->sx, filename);
     if(h->get_ndb < 0)
 	return FAIL_EINTERNAL;
     /* reset current getfile queries */
@@ -3574,7 +3557,7 @@ rc_ty sx_hashfs_getfile_begin(sx_hashfs_t *h, const char *volume, const char *fi
 	const char *rev = (const char *)sqlite3_column_text(q, 3);
 	if(!rev ||
 	   (created_at && parse_revision(rev, created_at)) ||
-	   (etag && hash_buf(h->cluster_uuid.string, strlen(h->cluster_uuid.string), rev, strlen(rev), etag))) {
+	   (etag && hash_buf(h->sx, h->cluster_uuid.string, strlen(h->cluster_uuid.string), rev, strlen(rev), etag))) {
 	    sx_hashfs_getfile_end(h);
 	    return FAIL_EINTERNAL;
 	}
@@ -3826,7 +3809,7 @@ rc_ty sx_hashfs_block_put(sx_hashfs_t *h, const uint8_t *data, unsigned int bs, 
     if(hs == SIZES)
 	return FAIL_BADBLOCKSIZE;
 
-    if(hash_buf(h->cluster_uuid.string, strlen(h->cluster_uuid.string), data, bs, &hash)) {
+    if(hash_buf(h->sx, h->cluster_uuid.string, strlen(h->cluster_uuid.string), data, bs, &hash)) {
 	WARN("hashing failed");
 	return FAIL_EINTERNAL;
     }
@@ -3991,7 +3974,7 @@ rc_ty sx_hashfs_putfile_begin(sx_hashfs_t *h, sx_uid_t user_id, const char *volu
     /* non-blocking pseudo-random bytes, i.e. we don't want to block or deplete
      * entropy as we only need a unique sequence of bytes, not a secret one as
      * it is sent in plaintext anyway, and signed with an HMAC */
-    if (RAND_pseudo_bytes(rnd, sizeof(rnd)) == -1) {
+    if (sxi_rand_pseudo_bytes(rnd, sizeof(rnd)) == -1) {
 	/* can also return 0 or 1 but that doesn't matter here */
 	WARN("Cannot generate random bytes");
 	return FAIL_EINTERNAL;
@@ -4021,7 +4004,7 @@ rc_ty sx_hashfs_putfile_extend_begin(sx_hashfs_t *h, sx_uid_t user_id, const uin
 
     putfile_reinit(h);
 
-    if(parse_token(user, token, &h->tokenkey, &tkdt))
+    if(parse_token(h->sx, user, token, &h->tokenkey, &tkdt))
 	return EINVAL;
 
     if(!(self = sx_hashfs_self(h)) || !(self_uuid = sx_node_uuid(self)))
@@ -4262,25 +4245,11 @@ static rc_ty filehash_mod_used(sx_hashfs_t *h, const sx_hash_t *filehash, int op
 
 static int unique_tmpid(sx_hashfs_t *h, const char *token, sx_hash_t *hash)
 {
-    EVP_MD_CTX hash_ctx;
     sx_uuid_t self;
-    int ret = 0;
 
-    if(!EVP_DigestInit(&hash_ctx, EVP_sha1())) {
-        SSLERR();
-        return 1;
-    }
     if (sx_hashfs_self_uuid(h, &self))
         return 1;
-    if (!EVP_DigestUpdate(&hash_ctx, &self.binary, sizeof(self.binary)) ||
-        !EVP_DigestUpdate(&hash_ctx, token, strlen(token)) ||
-        !EVP_DigestFinal(&hash_ctx, hash->b, NULL)) {
-        SSLERR();
-        ret = 1;
-    }
-
-    EVP_MD_CTX_cleanup(&hash_ctx);
-    return ret;
+    return hash_buf(h->sx, self.binary, sizeof(self.binary), token, strlen(token), hash);
 }
 
 rc_ty sx_hashfs_putfile_gettoken(sx_hashfs_t *h, const uint8_t *user, int64_t size_or_seq, const char **token, hash_presence_cb_t hdck_cb, void *hdck_cb_ctx) {
@@ -4478,7 +4447,7 @@ static rc_ty create_file(sx_hashfs_t *h, const sx_hashfs_volume_t *volume, const
 	return EFAULT;
     }
 
-    mdb = getmetadb(name);
+    mdb = getmetadb(h->sx, name);
     if(mdb < 0) {
 	msg_set_reason("Failed to locate file database");
 	return FAIL_EINTERNAL;
@@ -4590,7 +4559,7 @@ rc_ty sx_hashfs_createfile_commit(sx_hashfs_t *h, const char *volume, const char
 	return ENOENT;
     }
 
-    mdb = getmetadb(name);
+    mdb = getmetadb(h->sx, name);
     if(mdb < 0) {
 	msg_set_reason("Failed to locate file database");
 	return FAIL_EINTERNAL;
@@ -4815,7 +4784,7 @@ rc_ty sx_hashfs_putfile_commitjob(sx_hashfs_t *h, const uint8_t *user, sx_uid_t 
 	NULLARG();
 	return EFAULT;
     }
-    if(parse_token(user, token, &h->tokenkey, &tkdt)) {
+    if(parse_token(h->sx, user, token, &h->tokenkey, &tkdt)) {
 	WARN("bad token: %s", token);
 	return EINVAL;
     }
@@ -4949,23 +4918,24 @@ static int tmp_getmissing_cb(const char *hexhash, unsigned int index, int code, 
     return 0;
 }
 
-static int unique_fileid(const sx_hashfs_volume_t *volume, const char *name, const char *revision, sx_hash_t *fileid)
+static int unique_fileid(sxc_client_t *sx, const sx_hashfs_volume_t *volume, const char *name, const char *revision, sx_hash_t *fileid)
 {
     int ret = 0;
-    EVP_MD_CTX hash_ctx;
-    if(!EVP_DigestInit(&hash_ctx, EVP_sha1())) {
-        SSLERR();
+    sxi_md_ctx *hash_ctx = sxi_md_init(sx);
+    if (!hash_ctx)
         return 1;
-    }
-    if (!EVP_DigestUpdate(&hash_ctx, volume->name, strlen(volume->name) + 1) ||
-        !EVP_DigestUpdate(&hash_ctx, name, strlen(name) + 1) ||
-        !EVP_DigestUpdate(&hash_ctx, revision, strlen(revision)) ||
-        !EVP_DigestFinal(&hash_ctx, fileid->b, NULL)) {
+    if (!sxi_digest_init(hash_ctx))
+        return 1;
+
+    if (!sxi_digest_update(hash_ctx, volume->name, strlen(volume->name) + 1) ||
+        !sxi_digest_update(hash_ctx, name, strlen(name) + 1) ||
+        !sxi_digest_update(hash_ctx, revision, strlen(revision)) ||
+        !sxi_digest_final(hash_ctx, fileid->b, NULL)) {
         SSLERR();
         ret = 1;
     }
 
-    EVP_MD_CTX_cleanup(&hash_ctx);
+    sxi_md_cleanup(&hash_ctx);
     return ret;
 }
 
@@ -5228,7 +5198,7 @@ rc_ty sx_hashfs_tmp_tofile(sx_hashfs_t *h, const sx_hashfs_missing_t *missing) {
 	return EFAULT;
     }
 
-    mdb = getmetadb(missing->name);
+    mdb = getmetadb(h->sx, missing->name);
     if(mdb < 0) {
 	msg_set_reason("Failed to locate file database");
 	return FAIL_EINTERNAL;
@@ -5302,7 +5272,7 @@ rc_ty sx_hashfs_tmp_getmeta(sx_hashfs_t *h, const char *name, int64_t tmpfile_id
 	return EFAULT;
     }
 
-    mdb = getmetadb(name);
+    mdb = getmetadb(h->sx, name);
     if(mdb < 0) {
 	msg_set_reason("Failed to locate file database");
 	return FAIL_EINTERNAL;
@@ -5355,7 +5325,7 @@ static rc_ty get_file_id(sx_hashfs_t *h, const char *volume, const char *filenam
     if(res)
 	return res;
 
-    ndb = getmetadb(filename);
+    ndb = getmetadb(h->sx, filename);
     if(ndb < 0)
 	return FAIL_EINTERNAL;
 
@@ -5382,7 +5352,7 @@ static rc_ty get_file_id(sx_hashfs_t *h, const char *volume, const char *filenam
 	    const char *rev = (const char *)sqlite3_column_text(q, 3);
 	    if(!rev ||
 	       (created_at && parse_revision(rev, created_at)) ||
-	       (etag && hash_buf(h->cluster_uuid.string, strlen(h->cluster_uuid.string), rev, strlen(rev), etag)))
+	       (etag && hash_buf(h->sx, h->cluster_uuid.string, strlen(h->cluster_uuid.string), rev, strlen(rev), etag)))
 		res = FAIL_EINTERNAL;
 	}
     } else if(r == SQLITE_DONE)
@@ -5416,7 +5386,7 @@ rc_ty sx_hashfs_file_delete(sx_hashfs_t *h, const sx_hashfs_volume_t *volume, co
     /* MODHDIST: only decrementing hash refcounts from the newer distibution atm
      * This does not work for files deleted when not yet sync'd.
      * Review the delete/unbump strategy based on the final rebalance process */
-    if(hash_buf(h->cluster_uuid.string, strlen(h->cluster_uuid.string), volume->name, strlen(volume->name), &hash)) {
+    if(hash_buf(h->sx, h->cluster_uuid.string, strlen(h->cluster_uuid.string), volume->name, strlen(volume->name), &hash)) {
         WARN("Cannot calculate volume hash");
         return FAIL_EINTERNAL;
     }
@@ -5461,7 +5431,7 @@ rc_ty sx_hashfs_file_delete(sx_hashfs_t *h, const sx_hashfs_volume_t *volume, co
         return ret;
 
     if(current_replica >= 0) {
-	if (unique_fileid(volume, file, revision, &hash) ||
+	if (unique_fileid(h->sx, volume, file, revision, &hash) ||
 	    bin2hex(hash.b, sizeof(hash.b), fileidhex, sizeof(fileidhex)))
 	    return FAIL_EINTERNAL;
 	sxi_hashop_begin(&h->hc, h->sx_clust, NULL, HASHOP_DELETE, &hash, NULL);
@@ -6932,24 +6902,26 @@ rc_ty sx_hashfs_hdist_change_commit(sx_hashfs_t *h) {
 }
 
 rc_ty sx_hashfs_challenge_gen(sx_hashfs_t *h, sx_hash_challenge_t *c, int random_challenge) {
-    uint8_t md[EVP_MAX_MD_SIZE];
+    unsigned char md[HASH_BIN_LEN];
     unsigned int mdlen;
-    HMAC_CTX hmac_ctx;
+    sxi_hmac_ctx *hmac_ctx;
     rc_ty ret;
 
     if(random_challenge) {
-	if(RAND_pseudo_bytes(c->challenge, sizeof(c->challenge)) == -1) {
+	if(sxi_rand_pseudo_bytes(c->challenge, sizeof(c->challenge)) == -1) {
 	    WARN("Cannot generate random bytes");
 	    msg_set_reason("Failed to generate random nounce");
 	    return FAIL_EINTERNAL;
 	}
     }
 
-    HMAC_CTX_init(&hmac_ctx);
-    if(!sxi_hmac_init_ex(&hmac_ctx, &h->tokenkey, sizeof(h->tokenkey), EVP_sha1(), NULL) ||
-       !sxi_hmac_update(&hmac_ctx, c->challenge, sizeof(c->challenge)) ||
-       !sxi_hmac_update(&hmac_ctx, h->cluster_uuid.binary, sizeof(h->cluster_uuid.binary)) ||
-       !sxi_hmac_final(&hmac_ctx, md, &mdlen) ||
+    hmac_ctx = sxi_hmac_init(h->sx);
+    if (!hmac_ctx)
+        return 1;
+    if(!sxi_hmac_init_ex(hmac_ctx, &h->tokenkey, sizeof(h->tokenkey)) ||
+       !sxi_hmac_update(hmac_ctx, c->challenge, sizeof(c->challenge)) ||
+       !sxi_hmac_update(hmac_ctx, h->cluster_uuid.binary, sizeof(h->cluster_uuid.binary)) ||
+       !sxi_hmac_final(hmac_ctx, md, &mdlen) ||
        mdlen != sizeof(c->response)) {
 	msg_set_reason("Failed to compute nounce hmac");
 	CRIT("Cannot genearate nounce hmac");
@@ -6958,7 +6930,7 @@ rc_ty sx_hashfs_challenge_gen(sx_hashfs_t *h, sx_hash_challenge_t *c, int random
 	memcpy(c->response, md, sizeof(c->response));
 	ret = OK;
     }
-    HMAC_CTX_cleanup(&hmac_ctx);
+    sxi_hmac_cleanup(&hmac_ctx);
 
     return ret;
 }

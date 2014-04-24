@@ -24,13 +24,13 @@
 #include <strings.h>
 #include <curl/curl.h>
 #include <unistd.h>
-#include <openssl/evp.h>
 
 #include "libsx-int.h"
 #include "yajlwrap.h"
 #include "cluster.h"
 #include "curlevents.h"
 #include "misc.h"
+#include "vcrypto.h"
 
 #define CLSTDEBUG(...) do{ sxc_client_t *sx; if(conns && (sx = conns->sx)) SXDEBUG(__VA_ARGS__); } while(0)
 #define conns_err(...) do { if(conns) sxi_seterr(conns->sx, __VA_ARGS__); } while(0)
@@ -536,34 +536,40 @@ int sxi_cluster_query_ev_retry(curlev_context_t *cbdata,
                                 setup_callback, callback);
 }
 
-int sxi_conns_hashcalc_core(const sxi_conns_t *conns, const char *salt, const void *buffer, unsigned int len, char *hash) {
-    unsigned char d[20];
-    EVP_MD_CTX ctx;
+int sxi_conns_hashcalc_core_bin(sxc_client_t *sx, const void *salt, unsigned salt_len, const void *buffer, unsigned int len, unsigned char *md)
+{
+    sxi_md_ctx *ctx = sxi_md_init(sx);
+    if (!ctx) {
+        return -1;
+    }
+    if (!sxi_digest_init(ctx)) {
+        return 1;
+    }
 
-    if(!EVP_DigestInit(&ctx, EVP_sha1())) {
-	CLSTDEBUG("failed to init digest");
-	conns_err(SXE_ECRYPT, "Cannot compute hash: unable to initialize crypto library");
+    if(salt && !sxi_digest_update(ctx, salt, salt_len)) {
+	sxi_seterr(sx, SXE_ECRYPT, "Cannot compute hash: crypto library failure");
+        sxi_md_cleanup(&ctx);
 	return 1;
     }
-    if(salt && !EVP_DigestUpdate(&ctx, salt, strlen(salt))) {
-	CLSTDEBUG("failed to update digest");
-	conns_err(SXE_ECRYPT, "Cannot compute hash: crypto library failure");
-	EVP_MD_CTX_cleanup(&ctx);
+    if(!sxi_digest_update(ctx, buffer, len) || !sxi_digest_final(ctx, md, NULL)) {
+	sxi_seterr(sx, SXE_ECRYPT, "Cannot compute hash: crypto library failure");
+        sxi_md_cleanup(&ctx);
 	return 1;
     }
-    if(!EVP_DigestUpdate(&ctx, buffer, len) || !EVP_DigestFinal(&ctx, d, NULL)) {
-	CLSTDEBUG("failed to update digest");
-	conns_err(SXE_ECRYPT, "Cannot compute hash: crypto library failure");
-	EVP_MD_CTX_cleanup(&ctx);
-	return 1;
-    }
-    EVP_MD_CTX_cleanup(&ctx);
-
-    sxi_bin2hex(d, sizeof(d), hash);
+    sxi_md_cleanup(&ctx);
     return 0;
 }
 
-int sxi_conns_hashcalc(const sxi_conns_t *conns, const void *buffer, unsigned int len, char *hash) {
+int sxi_conns_hashcalc_core(sxc_client_t *sx, const void *salt, unsigned salt_len, const void *buffer, unsigned int len, char *hash)
+{
+    unsigned char md[HASH_BIN_LEN];
+    if (sxi_conns_hashcalc_core_bin(sx, salt, salt_len, buffer, len, md))
+        return 1;
+    sxi_bin2hex(md, sizeof(md), hash);
+    return 0;
+}
+
+int sxi_conns_hashcalc(sxi_conns_t *conns, const void *buffer, unsigned int len, char *hash) {
     const char *uuid = sxi_conns_get_uuid(conns);
     if(!uuid) {
 	CLSTDEBUG("cluster has got no uuid");
@@ -571,7 +577,7 @@ int sxi_conns_hashcalc(const sxi_conns_t *conns, const void *buffer, unsigned in
 	return 1;
     }
 
-    return sxi_conns_hashcalc_core(conns, uuid, buffer, len, hash);
+    return sxi_conns_hashcalc_core(sxi_conns_get_client(conns), uuid, strlen(uuid), buffer, len, (unsigned char*)hash);
 }
 
 static const int timeouts[] = { 3000, 6800, 9000, 10000, 11600, 14800, 20000 };

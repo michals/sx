@@ -8,7 +8,7 @@ PATH=`getconf PATH`
 
 prefix=`mktemp -d $PWD/sx-test-XXXXXXXX`
 cleanup () {
-    rm -rf "$prefix"
+    echo
 }
 trap cleanup EXIT INT
 

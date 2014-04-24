@@ -28,6 +28,7 @@
 #ifndef UTILS_H
 #define UTILS_H
 #include "default.h"
+#include "sx.h"
 #include <sys/time.h>
 
 int bin2hex(const void *src, uint32_t src_len, char *dst, uint32_t dst_len);
@@ -81,14 +82,15 @@ int uuid_from_string(sx_uuid_t *u, const char *s);
 void uuid_from_binary(sx_uuid_t *u, const void *b);
 
 int gen_key(unsigned char *buf, int num);
-int derive_key(const unsigned char *salt, unsigned slen,
+int derive_key(sxc_client_t *sx,
+               const unsigned char *salt, unsigned slen,
                const unsigned char *ikm, unsigned ilen,
                const char *info,
                unsigned char *buf, int blen);
 
 double timediff(struct timeval *time_start, struct timeval *time_end);
 
-int encode_auth(const char *user, const unsigned char *key, unsigned key_size, char *auth, unsigned auth_size);
+int encode_auth(sxc_client_t *sx, const char *user, const unsigned char *key, unsigned key_size, char *auth, unsigned auth_size);
 int encode_auth_bin(const uint8_t *userhash, const unsigned char *key, unsigned key_size, char *auth, unsigned auth_size);
 int ssl_version_check(void);
 const char *strptimegm(const char *s, const char *format, time_t *t);

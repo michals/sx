@@ -26,6 +26,8 @@
 #include "misc.h"
 #include "cert.h"
 #include "sxproto.h"
+#include "vcrypto.h"
+#include "vcryptocurl.h"
 #include <curl/curl.h>
 #include <errno.h>
 #include <stdlib.h>
@@ -34,20 +36,6 @@
 #include <arpa/inet.h>
 #include <sys/stat.h>
 #include <unistd.h>
-
-#define USE_OPENSSL
-//#define USE_NSS
-
-#ifdef USE_OPENSSL
-#include <openssl/ssl.h>
-#include <openssl/err.h>
-#include <openssl/hmac.h>
-#endif
-
-#ifdef USE_NSS
-#include <ssl.h>
-#include <nss.h>
-#endif
 
 #define ERRBUF_SIZE 512
 enum ctx_tag { CTX_UPLOAD, CTX_UPLOAD_HOST, CTX_DOWNLOAD, CTX_JOB, CTX_HASHOP, CTX_GENERIC };
@@ -450,7 +438,7 @@ void sxi_cbdata_finish(curl_events_t *e, curlev_context_t **ctxptr, const char *
     sxi_cbdata_unref(ctxptr);
 }
 
-typedef struct curlev {
+struct curlev {
     curlev_context_t *ctx;
     char *host;
     char *cluster;
@@ -464,7 +452,7 @@ typedef struct curlev {
     reply_t reply;
     struct curl_slist *resolve;
     int ssl_verified;/* 1 = OK; -1 = FAILED; 0 = not verified yet */
-} curlev_t;
+};
 
 #define MAX_EVENTS 64
 typedef struct {
@@ -1000,48 +988,6 @@ static int sockoptfn(void *clientp, curl_socket_t curlfd, curlsocktype purpose)
 #endif
 
 #ifdef USE_OPENSSL
-static int ssl_verify_hostname(X509_STORE_CTX *ctx, void *arg)
-{
-    STACK_OF(X509) *sk;
-    int err, ok;
-    X509 *x;
-    curlev_t *ev = arg;
-    sxi_conns_t *conns = ev->ctx->conns;
-    sxc_client_t *sx = sxi_conns_get_client(conns);
-    const char *name;
-
-    ok = X509_verify_cert(ctx);
-    sk = X509_STORE_CTX_get_chain(ctx);
-    X509_STORE_CTX_set_error(ctx,X509_V_OK);
-    if (!sk) {
-        sxi_seterr(sx, SXE_ECOMM, "No certificate chain?");
-        return 0;
-    }
-    x = sk_X509_value(sk, 0);
-    name = sxi_conns_get_sslname(conns) ? sxi_conns_get_sslname(conns) : sxi_conns_get_dnsname(conns);
-    if (sxi_verifyhost(sx, name, x) != CURLE_OK) {
-#if 0
-        if (!e->cafile) {
-            sxi_notice(sx, "Ignoring %s!", sxc_geterrmsg(sx));
-            ev->ssl_verified = 2;
-            return 1;
-        }
-#endif
-        sxi_seterr(sx, SXE_ECOMM, "Hostname mismatch in certificate, expected: \"%s\"", name);
-        X509_STORE_CTX_set_error(ctx,X509_V_ERR_APPLICATION_VERIFICATION);
-        return 0;
-    }
-    ev->ssl_verified = 1;
-    return 1;
-}
-
-static CURLcode sslctxfun_hostname(CURL *curl, void *sslctx, void *parm)
-{
-    SSL_CTX *ctx = (SSL_CTX*)sslctx;
-    SSL_CTX_set_default_verify_paths(ctx);
-    SSL_CTX_set_cert_verify_callback(ctx, ssl_verify_hostname, parm);
-    return CURLE_OK;
-}
 #endif
 
 static int xferinfo(void *p, curl_off_t dltotal, curl_off_t dlnow,
@@ -1108,15 +1054,16 @@ static int easy_set_default_opt(curl_events_t *e, curlev_t *ev)
     rc = curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
     if (curl_check(ev,rc,"set SSL_VERIFYHOST") == -1)
         return -1;
-#ifdef USE_OPENSSL
-    /* used for SSL hostname validation with OpenSSL */
-    rc = curl_easy_setopt(ev->curl, CURLOPT_SSL_CTX_FUNCTION, sslctxfun_hostname);
-    if (curl_check(ev, rc, "set CURLOPT_SSL_CTX_FUNCTION") == -1)
-        return -1;
-    rc = curl_easy_setopt(ev->curl, CURLOPT_SSL_CTX_DATA, ev);
-    if (curl_check(ev, rc, "set CURLOPT_SSL_CTX_DATA") == -1)
-        return -1;
-#endif
+
+    if (*sxi_sslctxfun) {
+        /* used for SSL hostname validation with OpenSSL */
+        rc = curl_easy_setopt(ev->curl, CURLOPT_SSL_CTX_FUNCTION, *sxi_sslctxfun);
+        if (curl_check(ev, rc, "set CURLOPT_SSL_CTX_FUNCTION") == -1)
+            return -1;
+        rc = curl_easy_setopt(ev->curl, CURLOPT_SSL_CTX_DATA, ev);
+        if (curl_check(ev, rc, "set CURLOPT_SSL_CTX_DATA") == -1)
+            return -1;
+    }
     /* used for SSL hostname validation with NSS (since we turned off VERIFY_HOST),
         * and (in the future) for transfer timeouts */
     curl_easy_setopt(ev->curl, CURLOPT_XFERINFOFUNCTION, xferinfo);
@@ -1302,18 +1249,7 @@ static int curlev_apply(curl_events_t *e, curlev_t *ev, curlev_t *src)
     return ret;
 }
 
-static int hmac_update_str(sxc_client_t *sx, HMAC_CTX *ctx, const char *str) {
-    int r = sxi_hmac_update(ctx, (unsigned char *)str, strlen(str));
-    if(r)
-	r = sxi_hmac_update(ctx, (unsigned char *)"\n", 1);
-    if(!r) {
-	SXDEBUG("hmac_update failed for '%s'", str);
-	sxi_seterr(sx, SXE_ECRYPT, "Cluster query failed: HMAC calculation failed");
-    }
-    return r;
-}
-
-static int compute_date(sxc_client_t *sx, char buf[32], time_t diff, HMAC_CTX *hmac_ctx) {
+static int compute_date(sxc_client_t *sx, char buf[32], time_t diff, sxi_hmac_ctx *hmac_ctx) {
     const char *month[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
     const char *wkday[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
     time_t t = time(NULL) + diff;
@@ -1326,7 +1262,7 @@ static int compute_date(sxc_client_t *sx, char buf[32], time_t diff, HMAC_CTX *h
     }
     sprintf(buf, "%s, %02u %s %04u %02u:%02u:%02u GMT", wkday[ts.tm_wday], ts.tm_mday, month[ts.tm_mon], ts.tm_year + 1900, ts.tm_hour, ts.tm_min, ts.tm_sec);
 
-    if(!hmac_update_str(sx, hmac_ctx, buf))
+    if(!sxi_hmac_update_str(hmac_ctx, buf))
 	return -1;
     return 0;
 }
@@ -1356,7 +1292,7 @@ static int compute_headers_url(curl_events_t *e, curlev_t *ev, curlev_t *src)
     char datebuf[32];
     unsigned content_size;
     unsigned int keylen;
-    HMAC_CTX hmac_ctx;
+    sxi_hmac_ctx *hmac_ctx = NULL;
     sxi_conns_t *conns;
     sxc_client_t *sx;
     int rc;
@@ -1376,13 +1312,15 @@ static int compute_headers_url(curl_events_t *e, curlev_t *ev, curlev_t *src)
     sx = sxi_conns_get_client(conns);
     /* we sign request as late as possible to avoid
      * clock drift errors from the server */
-    HMAC_CTX_init(&hmac_ctx);
     do {
         const char *verb = verbstr(src->verb);
         const char *token = sxi_conns_get_auth(e->conns);
         const char *query;
         char *url;
 	rc = -1;
+        hmac_ctx = sxi_hmac_init(sx);
+        if (!hmac_ctx)
+            break;
 
         content_size = src->body.size;
         content = src->body.data;
@@ -1419,16 +1357,16 @@ static int compute_headers_url(curl_events_t *e, curlev_t *ev, curlev_t *src)
             break;
         }
 
-        if(!sxi_hmac_init_ex(&hmac_ctx, bintoken + AUTH_UID_LEN, AUTH_KEY_LEN, EVP_sha1(), NULL)) {
+        if(!sxi_hmac_init_ex(hmac_ctx, bintoken + AUTH_UID_LEN, AUTH_KEY_LEN)) {
 	    EVDEBUG(ev, "failed to init hmac context");
 	    conns_err(SXE_ECRYPT, "Cluster query failed: HMAC calculation failed");
 	    break;
 	}
 
-	if(!hmac_update_str(sx, &hmac_ctx, verb) || !hmac_update_str(sx, &hmac_ctx, query))
+	if(!sxi_hmac_update_str(hmac_ctx, verb) || !sxi_hmac_update_str(hmac_ctx, query))
 	    break;
 
-	if (compute_date(sx, datebuf, sxi_conns_get_timediff(e->conns), &hmac_ctx) == -1)
+	if (compute_date(sx, datebuf, sxi_conns_get_timediff(e->conns), hmac_ctx) == -1)
 	    break;
 	if(content_size) {
 	    char content_hash[41];
@@ -1451,13 +1389,13 @@ static int compute_headers_url(curl_events_t *e, curlev_t *ev, curlev_t *src)
 	    sxi_bin2hex(d, sizeof(d), content_hash);
 	    content_hash[sizeof(content_hash)-1] = '\0';
 
-	    if(!hmac_update_str(sx, &hmac_ctx, content_hash))
+	    if(!sxi_hmac_update_str(hmac_ctx, content_hash))
 		break;
-	} else if(!hmac_update_str(sx, &hmac_ctx, "da39a3ee5e6b4b0d3255bfef95601890afd80709"))
+	} else if(!sxi_hmac_update_str(hmac_ctx, "da39a3ee5e6b4b0d3255bfef95601890afd80709"))
 	    break;
 
 	keylen = AUTH_KEY_LEN;
-	if(!sxi_hmac_final(&hmac_ctx, bintoken + AUTH_UID_LEN, &keylen) || keylen != AUTH_KEY_LEN) {
+	if(!sxi_hmac_final(hmac_ctx, bintoken + AUTH_UID_LEN, &keylen) || keylen != AUTH_KEY_LEN) {
 	    EVDEBUG(ev, "failed to finalize hmac calculation");
 	    conns_err(SXE_ECRYPT, "Cluster query failed: HMAC finalization failed");
 	    break;
@@ -1476,7 +1414,7 @@ static int compute_headers_url(curl_events_t *e, curlev_t *ev, curlev_t *src)
 	rc = 0;
     } while(0);
     free(sendtok);
-    HMAC_CTX_cleanup(&hmac_ctx);
+    sxi_hmac_cleanup(&hmac_ctx);
     return rc;
 }
 
@@ -1990,8 +1928,8 @@ static int print_certificate_info(curl_events_t *e, const struct curl_certinfo *
         }
         b64[i] = '\0';
         if (!sxi_b64_dec(sx, b64, rawbuf, &rawbuf_len)) {
-            char hash[HASH_TEXT_LEN + 1];
-            if (!sxi_conns_hashcalc_core(e->conns, NULL, rawbuf, rawbuf_len, hash)) {
+            unsigned char hash[HASH_TEXT_LEN + 1];
+            if (!sxi_conns_hashcalc_core(sxi_conns_get_client(e->conns), NULL, 0, rawbuf, rawbuf_len, hash)) {
                 sxi_fmt_msg(&fmt, "\tSHA1 fingerprint: %s\n", hash);
                 sxi_notice(sx, "%s", fmt.buf);
                 ok = 1;
@@ -2135,3 +2073,12 @@ int sxi_curlev_fetch_certificates(curl_events_t *e, const char *url)
     return !ok;
 }
 
+sxi_conns_t *sxi_curlev_get_conns(curlev_t *ev)
+{
+    return ev && ev->ctx ? ev->ctx->conns : NULL;
+}
+
+void sxi_curlev_set_verified(curlev_t *ev, int value)
+{
+    ev->ssl_verified = value;
+}

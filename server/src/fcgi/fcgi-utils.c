@@ -32,8 +32,12 @@
 #include <strings.h>
 #include <stdlib.h>
 
+/* TODO: use vcrypto.h */
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
+#define sxi_hmac_init_ex HMAC_Init_ex
+#define sxi_hmac_update HMAC_Update
+#define sxi_hmac_final HMAC_Final
 
 #include "fcgi-utils.h"
 #include "fcgi-actions.h"

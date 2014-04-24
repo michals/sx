@@ -29,8 +29,6 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <unistd.h>
-#include <openssl/pem.h>
-#include <openssl/rand.h>
 #include <pwd.h>
 
 #include "libsx-int.h"
@@ -42,6 +40,7 @@
 #include "sxproto.h"
 #include "jobpoll.h"
 #include "curlevents.h"
+#include "vcrypto.h"
 
 struct _sxc_cluster_t {
     sxc_client_t *sx;
@@ -2086,9 +2085,8 @@ const char *sxi_cluster_get_confdir(const sxc_cluster_t *cluster) {
 int sxc_user_add(sxc_cluster_t *cluster, const char *username, int admin, FILE *storeauth)
 {
     uint8_t buf[AUTH_UID_LEN + AUTH_KEY_LEN + 2], *uid = buf, *key = &buf[AUTH_UID_LEN];
-    char namebuf[1024], *tok;
+    char *tok;
     sxc_client_t *sx;
-    const char *rndfile;
     sxi_query_t *proto;
     EVP_MD_CTX ch_ctx;
     int l, qret;
@@ -2115,15 +2113,8 @@ int sxc_user_add(sxc_cluster_t *cluster, const char *username, int admin, FILE *
     EVP_MD_CTX_cleanup(&ch_ctx);
 
     /* KEY part - really random bytes */
-    rndfile = RAND_file_name(namebuf, sizeof(namebuf));
-    if(rndfile)
-        RAND_load_file(rndfile, -1);
-    if(RAND_status() == 1 && RAND_bytes(key, AUTH_KEY_LEN) == 1)
-        RAND_write_file(rndfile);
-    else {
+    if (sxi_rand_bytes(key, AUTH_KEY_LEN) != 1)
 	cluster_err(SXE_ECRYPT, "Unable to produce a random key");
-	return 1;
-    }
 
     /* Encode token */
     buf[sizeof(buf) - 2] = 0; /* First reserved byte */
@@ -2415,25 +2406,6 @@ int sxi_print_certificate_info(sxc_client_t *sx, X509 *x)
     return 0;
 }
 
-void sxi_print_old_certificate_info(sxc_client_t *sx, const char *file)
-{
-    X509 *x = NULL;
-    FILE *f = fopen(file, "r");
-    if (f) {
-        x = PEM_read_X509(f, NULL, NULL, NULL);
-        if (!x)
-            sxi_notice(sx, "Warning: can't load old CA certificate from '%s'", file);
-    } else
-        sxi_notice(sx, "Warning: can't open old CA certificate file '%s'", file);
-    fclose(f);
-    if (x) {
-        sxi_notice(sx, "[NOTICE]: SSL certificate of the cluster has changed, possible MITM attack!\nThe old CA certificate was:");
-        sxi_print_certificate_info(sx, x);
-    }
-    if (x)
-        X509_free(x);
-}
-
 void sxi_report_configuration(sxc_client_t *sx, const char *configdir)
 {
     DIR *d;
@@ -2476,11 +2448,13 @@ void sxi_report_configuration(sxc_client_t *sx, const char *configdir)
             if (cluster->cafile) {
                 FILE *f = fopen(cluster->cafile, "r");
                 if (f) {
+#if 0
                     X509 *x = PEM_read_X509(f, NULL, NULL, NULL);
                     fclose(f);
                     sxi_info(sx, "\tSSL certificate:");
                     sxi_print_certificate_info(sx, x);
                     X509_free(x);
+#endif
                 } else
                     sxi_setsyserr(sx,SXE_ECFG,"Cannot open CA file '%s'", cluster->cafile);
             }

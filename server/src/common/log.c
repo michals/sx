@@ -37,10 +37,10 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <openssl/err.h>
-#include <openssl/evp.h>
 #include <syslog.h>
 #include "../libsx/src/sxlog.h"
 #include "../libsx/src/misc.h"
+#include "../libsx/src/cluster.h"
 
 static struct _sx_logger_ctx {
     pid_t pid;
@@ -303,8 +303,7 @@ const char *msg_log_end(void)
 
 int msg_new_id(void)
 {
-    EVP_MD_CTX hash_ctx;
-    unsigned char md[EVP_MAX_MD_SIZE];
+    unsigned char md[HASH_BIN_LEN];
     pid_t p = getpid();
     unsigned len = sizeof(md);
 
@@ -313,6 +312,8 @@ int msg_new_id(void)
     log_record.reason[0] = '\0';
     log_record.id[0] = '\0';
 
+#if 0
+    TODO
     if (!EVP_DigestInit(&hash_ctx, EVP_sha1()) ||
         !EVP_DigestUpdate(&hash_ctx, &p, sizeof(p)) ||
         !EVP_DigestUpdate(&hash_ctx, &counter, sizeof(counter)) ||
@@ -320,6 +321,7 @@ int msg_new_id(void)
         WARN("Digest calculation failed");
         return -1;
     }
+#endif
     counter++;
     char *id = sxi_b64_enc_core(md, len);
     if (!id) {

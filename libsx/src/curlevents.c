@@ -32,11 +32,22 @@
 #include <stdio.h>
 #include <string.h>
 #include <arpa/inet.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#define USE_OPENSSL
+//#define USE_NSS
+
+#ifdef USE_OPENSSL
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/hmac.h>
-#include <sys/stat.h>
-#include <unistd.h>
+#endif
+
+#ifdef USE_NSS
+#include <ssl.h>
+#include <nss.h>
+#endif
 
 #define ERRBUF_SIZE 512
 enum ctx_tag { CTX_UPLOAD, CTX_UPLOAD_HOST, CTX_DOWNLOAD, CTX_JOB, CTX_HASHOP, CTX_GENERIC };
@@ -452,6 +463,7 @@ typedef struct curlev {
     enum sxi_cluster_verb verb;
     reply_t reply;
     struct curl_slist *resolve;
+    int ssl_verified;/* 1 = OK; -1 = FAILED; 0 = not verified yet */
 } curlev_t;
 
 #define MAX_EVENTS 64
@@ -491,6 +503,50 @@ static curlev_t *fifo_get(curlev_fifo_t *fifo)
     return ev;
 }
 
+static int check_ssl_cert(curlev_t *ev)
+{
+#ifdef USE_NSS
+    const struct curl_tlssessioninfo *info;
+    sxi_conns_t *conns = ev->ctx ? ev->ctx->conns : NULL;
+    sxc_client_t *sx = sxi_conns_get_client(conns);
+
+    SXDEBUG("in check_ssl_cert");
+    if (!ev->ssl_verified) {
+        const struct curl_slist *to_info = NULL;
+        CURLcode res = curl_easy_getinfo(ev->curl, CURLINFO_TLS_SESSION, &to_info);
+        memcpy(&info, &to_info, sizeof(to_info));
+        if (!res) {
+            switch (info->backend) {
+                case CURLSSLBACKEND_NSS:
+                    {
+                        PRFileDesc *desc = info->internals;
+                        CERTCertificate *cert = SSL_PeerCertificate(desc);
+                        const char *hostname = sxi_conns_get_sslname(conns);
+                        SECStatus ret = CERT_VerifyCertName(cert, hostname);
+                        if (ret == SECSuccess) {
+                            ev->ssl_verified = 1;
+                        } else {
+                            PRInt32 err = PR_GetError();
+                            sxi_seterr(sx, SXE_ECOMM, "Certificate is not valid for cluster '%s': %s", hostname,
+                                       PR_ErrorToString(err, PR_LANGUAGE_I_DEFAULT));
+                            ev->ssl_verified = -1;
+                            return -1;
+                        }
+                    }
+                default: {
+                             curl_version_info_data *data = curl_version_info(CURLVERSION_NOW);
+                             ev->ssl_verified = -1;
+                             sxi_seterr(sx, SXE_ECURL, "Unsupported Curl SSL backend (%d): %s", info->backend,
+                                        data && data->ssl_version ? data->ssl_version : "N/A");
+                             return -1;
+                         }
+            }
+        }
+    }
+#endif
+    return 0;
+}
+
 static size_t headfn(void *ptr, size_t size, size_t nmemb, curlev_t *ev)
 {
     curlev_context_t *ctx = ev ? ev->ctx : NULL;
@@ -502,6 +558,15 @@ static size_t headfn(void *ptr, size_t size, size_t nmemb, curlev_t *ev)
 
     if (!rctx->fail && rctx->reply_status >= 400)
         rctx->fail = 1;
+    if (check_ssl_cert(ev))
+        return 0;/* fail */
+    if (ev->ssl_verified != 1) {
+        /* TODO: only if connection is actually ssl */
+        sxi_seterr(sxi_conns_get_client(ev->ctx->conns), SXE_ECURL, "SSL certificate not verified");
+        return 0;
+    }
+    if (!ev->head)
+        return size * nmemb;
     switch (ev->head(ctx->conns, ptr, size, nmemb)) {
         case HEAD_SEEN:
             rctx->header_seen = 1;
@@ -934,6 +999,60 @@ static int sockoptfn(void *clientp, curl_socket_t curlfd, curlsocktype purpose)
 #error "errbuf too small: ERRBUF_SIZE < CURL_ERROR_SIZE"
 #endif
 
+#ifdef USE_OPENSSL
+static int ssl_verify_hostname(X509_STORE_CTX *ctx, void *arg)
+{
+    STACK_OF(X509) *sk;
+    int err, ok;
+    X509 *x;
+    curlev_t *ev = arg;
+    sxi_conns_t *conns = ev->ctx->conns;
+    sxc_client_t *sx = sxi_conns_get_client(conns);
+    const char *name;
+
+    ok = X509_verify_cert(ctx);
+    sk = X509_STORE_CTX_get_chain(ctx);
+    X509_STORE_CTX_set_error(ctx,X509_V_OK);
+    if (!sk) {
+        sxi_seterr(sx, SXE_ECOMM, "No certificate chain?");
+        return 0;
+    }
+    x = sk_X509_value(sk, 0);
+    name = sxi_conns_get_sslname(conns) ? sxi_conns_get_sslname(conns) : sxi_conns_get_dnsname(conns);
+    if (sxi_verifyhost(sx, name, x) != CURLE_OK) {
+#if 0
+        if (!e->cafile) {
+            sxi_notice(sx, "Ignoring %s!", sxc_geterrmsg(sx));
+            ev->ssl_verified = 2;
+            return 1;
+        }
+#endif
+        sxi_seterr(sx, SXE_ECOMM, "Hostname mismatch in certificate, expected: \"%s\"", name);
+        X509_STORE_CTX_set_error(ctx,X509_V_ERR_APPLICATION_VERIFICATION);
+        return 0;
+    }
+    ev->ssl_verified = 1;
+    return 1;
+}
+
+static CURLcode sslctxfun_hostname(CURL *curl, void *sslctx, void *parm)
+{
+    SSL_CTX *ctx = (SSL_CTX*)sslctx;
+    SSL_CTX_set_default_verify_paths(ctx);
+    SSL_CTX_set_cert_verify_callback(ctx, ssl_verify_hostname, parm);
+    return CURLE_OK;
+}
+#endif
+
+static int xferinfo(void *p, curl_off_t dltotal, curl_off_t dlnow,
+                    curl_off_t ultotal, curl_off_t ulnow)
+{
+    curlev_t *ev = p;
+
+    if (check_ssl_cert(ev))
+        return -1;
+    return 0;
+}
 static int easy_set_default_opt(curl_events_t *e, curlev_t *ev)
 {
     CURLcode rc;
@@ -989,6 +1108,21 @@ static int easy_set_default_opt(curl_events_t *e, curlev_t *ev)
     rc = curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
     if (curl_check(ev,rc,"set SSL_VERIFYHOST") == -1)
         return -1;
+#ifdef USE_OPENSSL
+    /* used for SSL hostname validation with OpenSSL */
+    rc = curl_easy_setopt(ev->curl, CURLOPT_SSL_CTX_FUNCTION, sslctxfun_hostname);
+    if (curl_check(ev, rc, "set CURLOPT_SSL_CTX_FUNCTION") == -1)
+        return -1;
+    rc = curl_easy_setopt(ev->curl, CURLOPT_SSL_CTX_DATA, ev);
+    if (curl_check(ev, rc, "set CURLOPT_SSL_CTX_DATA") == -1)
+        return -1;
+#endif
+    /* used for SSL hostname validation with NSS (since we turned off VERIFY_HOST),
+        * and (in the future) for transfer timeouts */
+    curl_easy_setopt(ev->curl, CURLOPT_XFERINFOFUNCTION, xferinfo);
+    curl_easy_setopt(ev->curl, CURLOPT_XFERINFODATA, ev);
+    curl_easy_setopt(ev->curl, CURLOPT_NOPROGRESS, 0L);
+
 
     if (e->cafile && !*e->cafile)
         e->cafile = e->defaultcafile;
@@ -1025,82 +1159,6 @@ static struct host_info *get_host(curl_events_t *e, const char *host)
     return info;
 }
 
-static const char *ssl_err(void)
-{
-    const char *s = ERR_reason_error_string(ERR_get_error());
-    return s ? s : "";
-}
-
-static int ssl_get_CA_cert(X509_STORE_CTX *ctx, void *arg)
-{
-    STACK_OF(X509) *sk;
-    int err, last_cert, ok;
-    BIO *out;
-    X509 *x;
-    curl_events_t *e = arg;
-    sxc_client_t *sx = sxi_conns_get_client(e->conns);
-    const char *name;
-    struct stat sb;
-
-    ok = X509_verify_cert(ctx);
-    sk = X509_STORE_CTX_get_chain(ctx);
-    if (!ok) {
-        err = X509_STORE_CTX_get_error(ctx);
-        SXDEBUG("Failed to verify SSL certificate: %s\n", X509_verify_cert_error_string(err));
-        return 0;
-    }
-    if (!sk) {
-        sxi_seterr(sx, SXE_ECOMM, "No certificate chain?");
-        return 0;
-    }
-    x = sk_X509_value(sk, 0);
-    name = sxi_conns_get_sslname(e->conns) ? sxi_conns_get_sslname(e->conns) : sxi_conns_get_dnsname(e->conns);
-    if (sxi_verifyhost(sx, name, x) != CURLE_OK) {
-        if (!e->cafile) {
-            sxi_notice(sx, "Ignoring %s!", sxc_geterrmsg(sx));
-            return 1;
-        }
-        sxi_seterr(sx, SXE_ECOMM, "Hostname mismatch in certificate, expected: \"%s\"", name);
-        X509_STORE_CTX_set_error(ctx,X509_V_ERR_APPLICATION_VERIFICATION);
-        return 0;
-    }
-    if (!e->savefile)
-        return 1;
-    last_cert = sk_X509_num(sk) - 1;
-    if (last_cert < 0 || !(x = sk_X509_value(sk, last_cert))) {
-        sxi_seterr(sx, SXE_ECOMM, "Cannot retrieve root cert");
-        return 0;
-    }
-    ERR_clear_error();
-    if (!(out = BIO_new_file(e->savefile,"w"))) {
-        sxi_seterr(sx, SXE_EWRITE, "Cannot open file '%s' for writing: %s", e->savefile, ssl_err());
-        return 0;
-    }
-    if (!PEM_write_bio_X509(out, x)) {
-        sxi_seterr(sx, SXE_EWRITE, "Cannot write certificate to '%s': %s", e->savefile, ssl_err());
-        return 0;
-    }
-    if (!BIO_free(out)) {
-        sxi_seterr(sx, SXE_EWRITE, "Cannot close file '%s': %s", e->savefile, ssl_err());
-        return 0;
-    }
-    if (stat(e->savefile, &sb) == -1 || !sb.st_size) {
-        sxi_seterr(sx, SXE_EWRITE, "Cannot save certificate to file: %s", e->savefile);
-        return 0;
-    }
-    e->saved = 1;
-    SXDEBUG("root CA saved to %s", e->savefile);
-    return 1;/* ok */
-}
-
-static CURLcode sslctxfun_save_rootCA(CURL *curl, void *sslctx, void *parm)
-{
-    SSL_CTX *ctx = (SSL_CTX*)sslctx;
-    SSL_CTX_set_default_verify_paths(ctx);
-    SSL_CTX_set_cert_verify_callback(ctx, ssl_get_CA_cert, parm);
-    return CURLE_OK;
-}
-
 static void resolve(curlev_t *ev, const char *host)
 {
 #if LIBCURL_VERSION_NUM >= 0x071503
@@ -1131,6 +1189,7 @@ static void resolve(curlev_t *ev, const char *host)
 }
 
 static int compute_headers_url(curl_events_t *e, curlev_t *ev, curlev_t *src);
+
 static int curlev_apply(curl_events_t *e, curlev_t *ev, curlev_t *src)
 {
     CURLcode rc;
@@ -1185,13 +1244,6 @@ static int curlev_apply(curl_events_t *e, curlev_t *ev, curlev_t *src)
 	    break;
 #endif
 
-        /* TODO: only if we're in ssl mode */
-        rc = curl_easy_setopt(ev->curl, CURLOPT_SSL_CTX_FUNCTION, sslctxfun_save_rootCA);
-        if (curl_check(ev, rc, "set CURLOPT_SSL_CTX_FUNCTION") == -1)
-            break;
-        rc = curl_easy_setopt(ev->curl, CURLOPT_SSL_CTX_DATA, e);
-        if (curl_check(ev, rc, "set CURLOPT_SSL_CTX_DATA") == -1)
-            break;
         rc = curl_easy_setopt(ev->curl, CURLOPT_PRIVATE, ev);
         if (curl_check(ev,rc,"set PRIVATE") == -1)
             break;
@@ -1241,6 +1293,7 @@ static int curlev_apply(curl_events_t *e, curlev_t *ev, curlev_t *src)
         rc = curl_easy_setopt(ev->curl, CURLOPT_HTTPHEADER, ev->slist);
         if (curl_check(ev, rc, "set headers"))
             break;
+        ev->ssl_verified = 0;
         ret = 0;
     } while(0);
     free(src->url);
@@ -2002,6 +2055,7 @@ int sxi_curlev_fetch_certificates(curl_events_t *e, const char *url)
     memset(&ctx, 0, sizeof(ctx));
     ev.curl = curl_easy_init();
     ev.ctx = &ctx;
+    ctx.conns = e->conns;
     if (!ev.curl) {
         sxi_seterr(sx, SXE_EMEM, "curl_easy_init failed");
         return -1;
@@ -2020,8 +2074,8 @@ int sxi_curlev_fetch_certificates(curl_events_t *e, const char *url)
         rc = curl_easy_setopt(ev.curl, CURLOPT_CERTINFO, 1L);
 	if (curl_check(&ev, rc, "set CURLOPT_CERTINFO") == -1)
 	    break;
-        rc = curl_easy_setopt(ev.curl, CURLOPT_CONNECT_ONLY, 1L);
-	if (curl_check(&ev, rc, "set CURLOPT_CONNECT_ONLY") == -1)
+        rc = curl_easy_setopt(ev.curl, CURLOPT_NOBODY, 1L);
+	if (curl_check(&ev, rc, "set CURLOPT_NOBODY") == -1)
 	    break;
         /* this is a test connection, do not reuse */
         rc = curl_easy_setopt(ev.curl, CURLOPT_FORBID_REUSE, 1L);
@@ -2030,13 +2084,24 @@ int sxi_curlev_fetch_certificates(curl_events_t *e, const char *url)
         rc = curl_easy_setopt(ev.curl, CURLOPT_SSL_VERIFYPEER, 1L);
         if (curl_check(&ev,rc,"set SSL_VERIFYPEER") == -1)
             break;
+        rc = curl_easy_setopt(ev.curl, CURLOPT_HEADERFUNCTION, (write_cb_t)headfn);
+        if (curl_check(&ev,rc, "set CURLOPT_HEADERFUNCTION") == -1)
+            break;
+        rc = curl_easy_setopt(ev.curl, CURLOPT_HEADERDATA, &ev);
+        if (curl_check(&ev,rc, "set CURLOPT_HEADERFUNCTION") == -1)
+            break;
 
+        ev.ssl_verified = 0;
         /* Do a first connection with peer verification turned on,
          * no questions asked if this succeeds.
          * This is needed to find root CA certs in the system cert store.
          * */
         rc = curl_easy_perform(ev.curl);
         if (rc == CURLE_OK) {
+            if (ev.ssl_verified != 1) {
+                sxi_seterr(sx, SXE_ECURL, "SSL certificate not verified");
+                break;
+            }
             if (save_ca(e, get_certinfo(&ev)))
                 break;
         } else if (rc == CURLE_SSL_CACERT) {
@@ -2045,9 +2110,14 @@ int sxi_curlev_fetch_certificates(curl_events_t *e, const char *url)
             rc = curl_easy_setopt(ev.curl, CURLOPT_SSL_VERIFYPEER, 0L);
             if (curl_check(&ev,rc,"set SSL_VERIFYPEER") == -1)
                 break;
+            ev.ssl_verified = 0;
             rc = curl_easy_perform(ev.curl);
             SXDEBUG("2nd perform result: %d", rc);
             if (rc == CURLE_OK || rc == CURLE_SSL_CACERT) {
+                if (ev.ssl_verified != 1) {
+                    sxi_seterr(sx, SXE_ECURL, "SSL certificate not verified");
+                    break;
+                }
                 const struct curl_certinfo *info = get_certinfo(&ev);
                 if (print_certificate_info(e, info)||
                     !sxi_confirm(sx, "Do you trust this SSL certificate?", 0) ||
@@ -2055,8 +2125,10 @@ int sxi_curlev_fetch_certificates(curl_events_t *e, const char *url)
                     break;
             }
         }
-        if (rc)
+        if (rc) {
+            fprintf(stderr,"here: %d\n",rc);
             break;
+        }
         ok = 1;
     } while(0);
     curl_easy_cleanup(ev.curl);

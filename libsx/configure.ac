@@ -72,6 +72,9 @@ if test "$ac_cv_type_HMAC_update" = "yes"; then
 	AC_DEFINE([HMAC_UPDATE_RETURNS_INT], 1, [Defined if HMAC_Update returns int])
 fi
 
+ac_save_LIBS=$LIBS
+PKG_CHECK_MODULES([NSS], [nss], [], [])
+LIBS=$ac_save_LIBS
 AC_CACHE_CHECK([for nftw], ac_cv_have_nftw,
 [AC_COMPILE_IFELSE(
 	[AC_LANG_PROGRAM([
@@ -86,15 +89,14 @@ if test "$ac_cv_have_nftw" = "yes"; then
 fi
 AM_CONDITIONAL([BUILD_NFTW], [test "$ac_cv_have_nftw" = "no"])
 
-LIBCURL_CHECK_CONFIG([], [], [], [build_curl=yes])
-AC_MSG_CHECKING([whether curl is built with OpenSSL support])
+LIBCURL_CHECK_CONFIG([], [7.34.0], [], [build_curl=yes])
+AC_MSG_CHECKING([whether curl is built with OpenSSL or NSS support])
 ac_save_CPPFLAGS="$CPPFLAGS"
 LIBS="$LIBCURL $ac_save_LIBS"
 CPPFLAGS="$LIBCURL_CPPFLAGS $ac_save_CPPFLAGS"
 AC_RUN_IFELSE([AC_LANG_PROGRAM([
     #include <curl/curl.h>
     #include <stdio.h>
-    static CURLcode sslctxfun(CURL *curl, void *sslctx, void *parm) { return CURLE_OK; }
 ], [
         CURL *curl;
         curl_version_info_data *data;
@@ -104,21 +106,13 @@ AC_RUN_IFELSE([AC_LANG_PROGRAM([
             return 1;
         }
         data = curl_version_info(CURLVERSION_NOW);
-        if (data) {
-            printf("Curl SSL version: %s\n", data->ssl_version);
+        if (data && data->ssl_version) {
+            puts(data->ssl_version);
+            if (strstr(data->ssl_version,"NSS") ||
+                strstr(data->ssl_version,"OpenSSL"))
+                return 0;
         }
-        curl = curl_easy_init();
-        if (!curl) {
-            fprintf(stderr,"Cannot create curl handle\n");
-            return 1;
-        }
-        rc = curl_easy_setopt(curl, CURLOPT_SSL_CTX_FUNCTION, sslctxfun);
-        if (rc != CURLE_OK) {
-            fprintf(stderr,"Cannot set SSL context function: %s\nIs curl built with OpenSSL?\n", curl_easy_strerror(rc));
-            return 1;
-        }
-        curl_easy_cleanup(curl);
-        return 0;
+        return 1;
 ])],[build_curl=no],[build_curl=yes],[build_curl=yes])
 CPPFLAGS="$ac_save_CPPFLAGS"
 LIBS="$ac_save_LIBS"

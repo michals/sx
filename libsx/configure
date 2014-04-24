@@ -652,6 +652,8 @@ LIBCURL_CPPFLAGS
 _libcurl_config
 BUILD_NFTW_FALSE
 BUILD_NFTW_TRUE
+NSS_LIBS
+NSS_CFLAGS
 CRYPTO_LIBS
 CRYPTO_CFLAGS
 PKG_CONFIG_LIBDIR
@@ -829,7 +831,9 @@ PKG_CONFIG
 PKG_CONFIG_PATH
 PKG_CONFIG_LIBDIR
 CRYPTO_CFLAGS
-CRYPTO_LIBS'
+CRYPTO_LIBS
+NSS_CFLAGS
+NSS_LIBS'
 ac_subdirs_all='../3rdparty/curl'
 
 # Initialize some variables set by options.
@@ -1497,6 +1501,8 @@ Some influential environment variables:
   CRYPTO_CFLAGS
               C compiler flags for CRYPTO, overriding pkg-config
   CRYPTO_LIBS linker flags for CRYPTO, overriding pkg-config
+  NSS_CFLAGS  C compiler flags for NSS, overriding pkg-config
+  NSS_LIBS    linker flags for NSS, overriding pkg-config
 
 Use these variables to override the choices made by `configure' or to help
 it to find libraries and programs with nonstandard names/locations.
@@ -14437,6 +14443,99 @@ $as_echo "#define HMAC_UPDATE_RETURNS_INT 1" >>confdefs.h
 
 fi
 
+ac_save_LIBS=$LIBS
+
+pkg_failed=no
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for NSS" >&5
+$as_echo_n "checking for NSS... " >&6; }
+
+if test -n "$NSS_CFLAGS"; then
+    pkg_cv_NSS_CFLAGS="$NSS_CFLAGS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { $as_echo "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"nss\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "nss") 2>&5
+  ac_status=$?
+  $as_echo "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_NSS_CFLAGS=`$PKG_CONFIG --cflags "nss" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+if test -n "$NSS_LIBS"; then
+    pkg_cv_NSS_LIBS="$NSS_LIBS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { $as_echo "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"nss\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "nss") 2>&5
+  ac_status=$?
+  $as_echo "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_NSS_LIBS=`$PKG_CONFIG --libs "nss" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+
+
+
+if test $pkg_failed = yes; then
+   	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+
+if $PKG_CONFIG --atleast-pkgconfig-version 0.20; then
+        _pkg_short_errors_supported=yes
+else
+        _pkg_short_errors_supported=no
+fi
+        if test $_pkg_short_errors_supported = yes; then
+	        NSS_PKG_ERRORS=`$PKG_CONFIG --short-errors --print-errors --cflags --libs "nss" 2>&1`
+        else
+	        NSS_PKG_ERRORS=`$PKG_CONFIG --print-errors --cflags --libs "nss" 2>&1`
+        fi
+	# Put the nasty error message in config.log where it belongs
+	echo "$NSS_PKG_ERRORS" >&5
+
+	as_fn_error $? "Package requirements (nss) were not met:
+
+$NSS_PKG_ERRORS
+
+Consider adjusting the PKG_CONFIG_PATH environment variable if you
+installed software in a non-standard prefix.
+
+Alternatively, you may set the environment variables NSS_CFLAGS
+and NSS_LIBS to avoid the need to call pkg-config.
+See the pkg-config man page for more details." "$LINENO" 5
+elif test $pkg_failed = untried; then
+     	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+	{ { $as_echo "$as_me:${as_lineno-$LINENO}: error: in \`$ac_pwd':" >&5
+$as_echo "$as_me: error: in \`$ac_pwd':" >&2;}
+as_fn_error $? "The pkg-config script could not be found or is too old.  Make sure it
+is in your PATH or set the PKG_CONFIG environment variable to the full
+path to pkg-config.
+
+Alternatively, you may set the environment variables NSS_CFLAGS
+and NSS_LIBS to avoid the need to call pkg-config.
+See the pkg-config man page for more details.
+
+To get pkg-config, see <http://pkg-config.freedesktop.org/>.
+See \`config.log' for more details" "$LINENO" 5; }
+else
+	NSS_CFLAGS=$pkg_cv_NSS_CFLAGS
+	NSS_LIBS=$pkg_cv_NSS_LIBS
+        { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+$as_echo "yes" >&6; }
+
+fi
+LIBS=$ac_save_LIBS
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for nftw" >&5
 $as_echo_n "checking for nftw... " >&6; }
 if ${ac_cv_have_nftw+:} false; then :
@@ -14659,11 +14758,11 @@ fi
 $as_echo "$libcurl_cv_lib_curl_version" >&6; }
 
         _libcurl_version=`echo $libcurl_cv_lib_curl_version | $_libcurl_version_parse`
-        _libcurl_wanted=`echo 0 | $_libcurl_version_parse`
+        _libcurl_wanted=`echo 7.34.0 | $_libcurl_version_parse`
 
         if test $_libcurl_wanted -gt 0 ; then
-           { $as_echo "$as_me:${as_lineno-$LINENO}: checking for libcurl >= version " >&5
-$as_echo_n "checking for libcurl >= version ... " >&6; }
+           { $as_echo "$as_me:${as_lineno-$LINENO}: checking for libcurl >= version 7.34.0" >&5
+$as_echo_n "checking for libcurl >= version 7.34.0... " >&6; }
 if ${libcurl_cv_lib_version_ok+:} false; then :
   $as_echo_n "(cached) " >&6
 else
@@ -14863,8 +14962,8 @@ _ACEOF
 
   unset _libcurl_with
 
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking whether curl is built with OpenSSL support" >&5
-$as_echo_n "checking whether curl is built with OpenSSL support... " >&6; }
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking whether curl is built with OpenSSL or NSS support" >&5
+$as_echo_n "checking whether curl is built with OpenSSL or NSS support... " >&6; }
 ac_save_CPPFLAGS="$CPPFLAGS"
 LIBS="$LIBCURL $ac_save_LIBS"
 CPPFLAGS="$LIBCURL_CPPFLAGS $ac_save_CPPFLAGS"
@@ -14876,7 +14975,6 @@ else
 
     #include <curl/curl.h>
     #include <stdio.h>
-    static CURLcode sslctxfun(CURL *curl, void *sslctx, void *parm) { return CURLE_OK; }
 
 int
 main ()
@@ -14890,21 +14988,13 @@ main ()
             return 1;
         }
         data = curl_version_info(CURLVERSION_NOW);
-        if (data) {
-            printf("Curl SSL version: %s\n", data->ssl_version);
+        if (data && data->ssl_version) {
+            puts(data->ssl_version);
+            if (strstr(data->ssl_version,"NSS") ||
+                strstr(data->ssl_version,"OpenSSL"))
+                return 0;
         }
-        curl = curl_easy_init();
-        if (!curl) {
-            fprintf(stderr,"Cannot create curl handle\n");
-            return 1;
-        }
-        rc = curl_easy_setopt(curl, CURLOPT_SSL_CTX_FUNCTION, sslctxfun);
-        if (rc != CURLE_OK) {
-            fprintf(stderr,"Cannot set SSL context function: %s\nIs curl built with OpenSSL?\n", curl_easy_strerror(rc));
-            return 1;
-        }
-        curl_easy_cleanup(curl);
-        return 0;
+        return 1;
 
   ;
   return 0;

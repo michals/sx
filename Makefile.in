@@ -81,9 +81,9 @@ POST_UNINSTALL = :
 @BUILD_YAJL_TRUE@am__append_4 = 3rdparty/yajl_build
 subdir = .
 DIST_COMMON = $(srcdir)/Makefile.in $(srcdir)/Makefile.am \
-	$(top_srcdir)/configure $(am__configure_deps) COPYING \
-	build-aux/compile build-aux/install-sh build-aux/missing \
-	$(top_srcdir)/build-aux/compile \
+	$(top_srcdir)/configure $(am__configure_deps) COPYING INSTALL \
+	README build-aux/compile build-aux/install-sh \
+	build-aux/missing $(top_srcdir)/build-aux/compile \
 	$(top_srcdir)/build-aux/install-sh \
 	$(top_srcdir)/build-aux/missing
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
@@ -743,6 +743,9 @@ uninstall-am:
 
 clean-local:
 	rm -f test-suite.log
+
+test: check
+	true
 
 # Tell versions [3.59,3.63) of GNU make to not export all variables.
 # Otherwise a system limit (for SysV at least) may be exceeded.

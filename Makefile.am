@@ -18,3 +18,6 @@ DIST_SUBDIRS = $(SUBDIRS)
 
 clean-local:
 	rm -f test-suite.log
+
+test: check
+	true

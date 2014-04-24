@@ -129,5 +129,6 @@ sxi_retry_t* sxi_retry_init(sxc_client_t *sx);
 int sxi_retry_check(sxi_retry_t *retry, unsigned current_try);
 void sxi_retry_msg(sxi_retry_t *retry, const char *host);
 int sxi_retry_done(sxi_retry_t **retry);
+int sxi_curlev_fetch_certificates(curl_events_t *e, const char *url);
 
 #endif

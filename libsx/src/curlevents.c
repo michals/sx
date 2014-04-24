@@ -1025,18 +1025,6 @@ static struct host_info *get_host(curl_events_t *e, const char *host)
     return info;
 }
 
-static int ask_trust(sxc_client_t *sx, const char *cafile, X509 *x)
-{
-    if (cafile && *cafile) {
-        sxi_print_old_certificate_info(sx, cafile);
-        sxi_notice(sx, "The new CA certificate is:");
-    } else
-        sxi_notice(sx, "Warning: self-signed certificate:\n");
-    sxi_print_certificate_info(sx, x);
-
-    return sxi_confirm(sx, "Do you trust this SSL certificate?", 0) ? 0 : -1;
-}
-
 static const char *ssl_err(void)
 {
     const char *s = ERR_reason_error_string(ERR_get_error());
@@ -1058,19 +1046,8 @@ static int ssl_get_CA_cert(X509_STORE_CTX *ctx, void *arg)
     sk = X509_STORE_CTX_get_chain(ctx);
     if (!ok) {
         err = X509_STORE_CTX_get_error(ctx);
-        if (e->savefile && (err == X509_V_ERR_SELF_SIGNED_CERT_IN_CHAIN || err == X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT)) {
-	    if(!e->quiet) {
-		if (ask_trust(sx, e->cafile, sk_X509_value(sk, 0)) == -1) {
-		    sxi_notice(sx, "Not trusting certificate");
-		    return 0;
-		}
-		sxi_notice(sx, "Trusting self-signed certificate");
-	    }
-            X509_STORE_CTX_set_error(ctx,X509_V_OK);
-        } else {
-            SXDEBUG("Failed to verify SSL certificate: %s\n", X509_verify_cert_error_string(err));
-            return 0;
-        }
+        SXDEBUG("Failed to verify SSL certificate: %s\n", X509_verify_cert_error_string(err));
+        return 0;
     }
     if (!sk) {
         sxi_seterr(sx, SXE_ECOMM, "No certificate chain?");
@@ -1883,3 +1860,206 @@ int sxi_retry_done(sxi_retry_t **retryptr)
     *retryptr = NULL;
     return sxc_geterrnum(sx) != SXE_NOERROR;
 }
+
+static const struct curl_certinfo *get_certinfo(curlev_t *ctx)
+{
+    const struct curl_slist *to_info = NULL;
+    int res = curl_easy_getinfo(ctx->curl, CURLINFO_CERTINFO, &to_info);
+    if (!res) {
+        const struct curl_certinfo *to_certinfo;
+        memcpy(&to_certinfo, &to_info, sizeof(to_info));
+        if (to_certinfo->num_of_certs > 0)
+            return to_certinfo;
+    }
+    return NULL;
+}
+
+static const char *get_certinfo_field(const struct curl_certinfo *cert, int i, const char *key)
+{
+    const struct curl_slist *slist;
+    unsigned keylen = strlen(key);
+    if (i < 0 || i >= cert->num_of_certs)
+        return NULL;
+    for (slist = cert->certinfo[i]; slist; slist = slist->next) {
+        const char *data = slist->data;
+        if (data && !strncmp(data, key, keylen) && data[keylen] == ':')
+            return data + keylen + 1;
+    }
+    return NULL;
+}
+
+static int print_certificate_info(curl_events_t *e, const struct curl_certinfo *info)
+{
+    sxc_client_t *sx = sxi_conns_get_client(e->conns);
+    if (!info)
+        return -1;
+    int ca = info->num_of_certs - 1;
+    if (ca < 0) {
+        sxi_seterr(sx, SXE_ECOMM, "Received 0 certificates");
+        return -1;
+    }
+
+    struct sxi_fmt fmt;
+    sxi_fmt_start(&fmt);
+    sxi_fmt_msg(&fmt, "Server certificate:\n");
+    sxi_fmt_msg(&fmt, "\tSubject: %s\n", get_certinfo_field(info, 0, "Subject"));
+    sxi_fmt_msg(&fmt, "\tIssuer: %s\n", get_certinfo_field(info, 0, "Issuer"));
+    if (ca > 0) {
+        sxi_fmt_msg(&fmt, "Certificate Authority:\n");
+        sxi_fmt_msg(&fmt, "\tSubject: %s\n", get_certinfo_field(info, ca, "Subject"));
+        sxi_fmt_msg(&fmt, "\tIssuer: %s\n", get_certinfo_field(info, ca, "Issuer"));
+    }
+    const char *rootcert = get_certinfo_field(info, ca, "Cert");
+    rootcert = strchr(rootcert, '\n');
+    if (rootcert) {
+        int ok = 0;
+        rootcert++;
+        unsigned i = 0;
+        unsigned rawbuf_len = 3 * strlen(rootcert) / 4;
+        unsigned char *rawbuf = calloc(1, rawbuf_len);
+        if (!rawbuf) {
+            sxi_setsyserr(sx, SXE_EMEM, "Cannot allocate memory");
+            return -1;
+        }
+        char *b64 = calloc(1, strlen(rootcert));
+        if (!b64) {
+            sxi_setsyserr(sx, SXE_EMEM, "Cannot allocate memory");
+            free(rawbuf);
+            return -1;
+        }
+        for (;*rootcert;rootcert++) {
+            unsigned char c = *rootcert;
+            if (c == ' ' || c == '\n' || c == '\r')
+                continue;
+            if (c == '-')
+                break;
+            b64[i++] = c;
+        }
+        b64[i] = '\0';
+        if (!sxi_b64_dec(sx, b64, rawbuf, &rawbuf_len)) {
+            char hash[HASH_TEXT_LEN + 1];
+            if (!sxi_conns_hashcalc_core(e->conns, NULL, rawbuf, rawbuf_len, hash)) {
+                sxi_fmt_msg(&fmt, "\tSHA1 fingerprint: %s\n", hash);
+                sxi_notice(sx, "%s", fmt.buf);
+                ok = 1;
+            }
+        }
+        free(b64);
+        free(rawbuf);
+        if (ok)
+            return 0;
+    }
+
+    sxi_seterr(sx, SXE_ECOMM, "Invalid certificate: %s", rootcert);
+    return -1;
+}
+
+static int save_ca(curl_events_t *e, const struct curl_certinfo *certinfo)
+{
+    sxc_client_t *sx = sxi_conns_get_client(e->conns);
+    if (!certinfo)
+        return -1;
+    int ca = certinfo->num_of_certs - 1;
+    const char *subj = get_certinfo_field(certinfo, ca, "Subject");
+    const char *cert = get_certinfo_field(certinfo, ca, "Cert");
+    FILE *out;
+    int rc = 0;
+
+    if (!cert) {
+        sxi_seterr(sx, SXE_ECOMM, "Received 0 certificates");
+        return -1;
+    }
+    out = fopen(e->savefile, "w");
+    if (!out) {
+        sxi_setsyserr(sx, SXE_EWRITE, "Cannot open '%s' for writing", e->savefile);
+        return -1;
+    }
+    if (fputs(cert, out) < 0) {
+        sxi_setsyserr(sx, SXE_EWRITE, "Cannot save '%s'", e->savefile);
+        rc = -1;
+    }
+    if (fclose(out)) {
+        sxi_setsyserr(sx, SXE_EWRITE, "Cannot save(close) '%s'", e->savefile);
+        rc = -1;
+    }
+    if (!rc) {
+        e->saved = 1;
+        if (subj)
+            SXDEBUG("Saved root CA '%s' to '%s'", subj, e->savefile);
+    }
+    return rc;
+}
+
+int sxi_curlev_fetch_certificates(curl_events_t *e, const char *url)
+{
+    int ok = 0;
+    CURLcode rc;
+    sxc_client_t *sx = sxi_conns_get_client(e->conns);
+    curlev_t ev;
+    curlev_context_t ctx;
+
+    memset(&ev, 0, sizeof(ev));
+    memset(&ctx, 0, sizeof(ctx));
+    ev.curl = curl_easy_init();
+    ev.ctx = &ctx;
+    if (!ev.curl) {
+        sxi_seterr(sx, SXE_EMEM, "curl_easy_init failed");
+        return -1;
+    }
+    do {
+        sxi_curlev_set_cafile(e, NULL);
+        if (easy_set_default_opt(e, &ev))
+            break;
+        rc = curl_easy_setopt(ev.curl, CURLOPT_URL, url);
+        if (curl_check(&ev,rc, "set CURLOPT_URL") == -1)
+            break;
+        long contimeout = sxi_conns_get_timeout(e->conns, url);
+	rc = curl_easy_setopt(ev.curl, CURLOPT_CONNECTTIMEOUT_MS, contimeout);
+	if (curl_check(&ev, rc, "set CURLOPT_CONNECTTIMEOUT_MS") == -1)
+	    break;
+        rc = curl_easy_setopt(ev.curl, CURLOPT_CERTINFO, 1L);
+	if (curl_check(&ev, rc, "set CURLOPT_CERTINFO") == -1)
+	    break;
+        rc = curl_easy_setopt(ev.curl, CURLOPT_CONNECT_ONLY, 1L);
+	if (curl_check(&ev, rc, "set CURLOPT_CONNECT_ONLY") == -1)
+	    break;
+        /* this is a test connection, do not reuse */
+        rc = curl_easy_setopt(ev.curl, CURLOPT_FORBID_REUSE, 1L);
+	if (curl_check(&ev, rc, "set CURLOPT_FORBID_REUSE") == -1)
+	    break;
+        rc = curl_easy_setopt(ev.curl, CURLOPT_SSL_VERIFYPEER, 1L);
+        if (curl_check(&ev,rc,"set SSL_VERIFYPEER") == -1)
+            break;
+
+        /* Do a first connection with peer verification turned on,
+         * no questions asked if this succeeds.
+         * This is needed to find root CA certs in the system cert store.
+         * */
+        rc = curl_easy_perform(ev.curl);
+        if (rc == CURLE_OK) {
+            if (save_ca(e, get_certinfo(&ev)))
+                break;
+        } else if (rc == CURLE_SSL_CACERT) {
+            /* Do a second try with verification turned off, and ask a question.
+             * this won't find root CA certs stored in system cert store */
+            rc = curl_easy_setopt(ev.curl, CURLOPT_SSL_VERIFYPEER, 0L);
+            if (curl_check(&ev,rc,"set SSL_VERIFYPEER") == -1)
+                break;
+            rc = curl_easy_perform(ev.curl);
+            SXDEBUG("2nd perform result: %d", rc);
+            if (rc == CURLE_OK || rc == CURLE_SSL_CACERT) {
+                const struct curl_certinfo *info = get_certinfo(&ev);
+                if (print_certificate_info(e, info)||
+                    !sxi_confirm(sx, "Do you trust this SSL certificate?", 0) ||
+                    save_ca(e, info))
+                    break;
+            }
+        }
+        if (rc)
+            break;
+        ok = 1;
+    } while(0);
+    curl_easy_cleanup(ev.curl);
+    return !ok;
+}
+

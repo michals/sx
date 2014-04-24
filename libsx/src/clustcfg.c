@@ -2506,6 +2506,8 @@ int sxc_cluster_fetch_ca(sxc_cluster_t *cluster, int quiet)
     sxi_set_operation(sxi_cluster_get_client(cluster), "fetch certificate", sxi_cluster_get_name(cluster), NULL, NULL);
     if (sxi_conns_root_noauth(sxi_cluster_get_conns(cluster), tmpcafile, quiet))
         return 1;
+    /* TODO: also check whether the root CA changed ..., and whether server cert
+     * changed especially if we're not trusted */
     if (tmpcafile && sxc_cluster_set_cafile(cluster, tmpcafile))
         return 1;
     return 0;

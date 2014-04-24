@@ -452,6 +452,7 @@ struct curlev {
     reply_t reply;
     struct curl_slist *resolve;
     int ssl_verified;/* 1 = OK; -1 = FAILED; 0 = not verified yet */
+    int is_http;
 };
 
 #define MAX_EVENTS 64
@@ -548,7 +549,7 @@ static size_t headfn(void *ptr, size_t size, size_t nmemb, curlev_t *ev)
         rctx->fail = 1;
     if (check_ssl_cert(ev))
         return 0;/* fail */
-    if (ev->ssl_verified != 1) {
+    if (ev->ssl_verified != 1 && !ev->is_http) {
         /* TODO: only if connection is actually ssl */
         sxi_seterr(sxi_conns_get_client(ev->ctx->conns), SXE_ECURL, "SSL certificate not verified");
         return 0;
@@ -1240,7 +1241,6 @@ static int curlev_apply(curl_events_t *e, curlev_t *ev, curlev_t *src)
         rc = curl_easy_setopt(ev->curl, CURLOPT_HTTPHEADER, ev->slist);
         if (curl_check(ev, rc, "set headers"))
             break;
-        ev->ssl_verified = 0;
         ret = 0;
     } while(0);
     free(src->url);
@@ -1337,11 +1337,12 @@ static int compute_headers_url(curl_events_t *e, curlev_t *ev, curlev_t *src)
         if (curl_check(ev, rc, "get URL"))
             break;
 
-        if (!strncmp(url, "http://", 7))
+        if (!strncmp(url, "http://", 7)) {
             query = url + 7;
-        else if(!strncmp(url, "https://", 8))
+            ev->is_http = 1;
+        } else if(!strncmp(url, "https://", 8)) {
             query = url + 8;
-        else {
+        } else {
             conns_err(SXE_EARG, "Invalid URL: %s", url);
             break;
         }
